@@ -196,7 +196,9 @@ function escapeHtml(text) {
 }
 
 function topBar() {
-  const userInfo = state.user ? `<span style="color:var(--text-secondary);font-family:var(--font-mono);font-size:0.85rem">${state.user.email}</span>` : '';
+  const userInfo = state.user
+    ? `<span style="color:var(--text-secondary);font-family:var(--font-mono);font-size:0.85rem">${state.user.email}${state.user.role === 'admin' ? ' [ADMIN]' : ''}</span>`
+    : '';
   return `
     <div class="top-bar">
       <div class="logo" onclick="navigate('/bookshelf')">罗德岛书架</div>

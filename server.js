@@ -10,6 +10,8 @@ const db = require('./db');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'arknights-bookshelf-secret-key';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@rhodes.island';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -18,6 +20,18 @@ const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
+
+// Seed default admin
+function seedAdmin() {
+  const users = db.get('users');
+  if (!users.find(u => u.email === ADMIN_EMAIL)) {
+    const id = uuidv4();
+    const password_hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+    db.insert('users', { id, email: ADMIN_EMAIL, password_hash, role: 'admin', created_at: new Date().toISOString() });
+    console.log(`[Admin] Created default admin: ${ADMIN_EMAIL}`);
+  }
+}
+seedAdmin();
 
 // Auth middleware
 function authenticateToken(req, res, next) {
@@ -57,10 +71,10 @@ app.post('/api/auth/register', (req, res) => {
   }
   const id = uuidv4();
   const password_hash = bcrypt.hashSync(password, 10);
-  const user = { id, email, password_hash, created_at: new Date().toISOString() };
+  const user = { id, email, password_hash, role: 'user', created_at: new Date().toISOString() };
   db.insert('users', user);
-  const token = jwt.sign({ id, email }, JWT_SECRET, { expiresIn: '7d' });
-  res.json({ token, user: { id, email } });
+  const token = jwt.sign({ id, email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+  res.json({ token, user: { id, email, role: user.role } });
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -70,12 +84,31 @@ app.post('/api/auth/login', (req, res) => {
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: '邮箱或密码错误' });
   }
-  const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
-  res.json({ token, user: { id: user.id, email: user.email } });
+  const token = jwt.sign({ id: user.id, email: user.email, role: user.role || 'user' }, JWT_SECRET, { expiresIn: '7d' });
+  res.json({ token, user: { id: user.id, email: user.email, role: user.role || 'user' } });
 });
 
 app.get('/api/auth/me', authenticateToken, (req, res) => {
   res.json({ user: req.user });
+});
+
+// Admin middleware
+function requireAdmin(req, res, next) {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: '需要管理员权限' });
+  }
+  next();
+}
+
+// Admin routes
+app.get('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
+  const users = db.get('users').map(u => ({ id: u.id, email: u.email, role: u.role || 'user', created_at: u.created_at }));
+  res.json(users);
+});
+
+app.get('/api/admin/books', authenticateToken, requireAdmin, (req, res) => {
+  const books = db.get('books');
+  res.json(books);
 });
 
 // Book routes
