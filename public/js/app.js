@@ -9,7 +9,7 @@ const state = {
   currentBook: null,
   readerSettings: JSON.parse(localStorage.getItem('readerSettings')) || {
     fontSize: 18,
-    lineHeight: 1.8,
+    lineHeight: 1.75,
     theme: 'dark',
     fontFamily: 'Noto Sans SC'
   }
@@ -86,10 +86,13 @@ function render() {
 function renderLogin(container) {
   container.innerHTML = `
     <div class="auth-page">
+      <div class="auth-bg"></div>
+      <img class="auth-character" src="/assets/kaltsit.png" alt="Kal'tsit" />
       <div class="auth-box">
         <div class="auth-logo">
-          <h1>◢ RHODES ISLAND</h1>
-          <p>罗德岛共享书架 · 登录</p>
+          <img src="/assets/rhodes_island.png" alt="Rhodes Island" />
+          <h1>罗德岛书架</h1>
+          <p>罗德岛内部电子档案库 · 登录</p>
         </div>
         <div class="panel" id="login-panel">
           <div class="panel-title">操作员认证</div>
@@ -101,12 +104,12 @@ function renderLogin(container) {
             </div>
             <div class="form-group">
               <label>密码</label>
-              <input type="password" id="password" required placeholder="••••••••" />
+              <input type="password" id="password" required placeholder='输入密码' />
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%">登录</button>
           </form>
           <p style="text-align:center;margin-top:16px;color:var(--text-secondary);font-size:0.9rem">
-            还没有账号？ <a href="#/register" style="color:var(--accent)">注册</a>
+            还没有账号？<a href="#/register">注册</a>
           </p>
         </div>
       </div>
@@ -130,13 +133,16 @@ function renderLogin(container) {
 function renderRegister(container) {
   container.innerHTML = `
     <div class="auth-page">
+      <div class="auth-bg"></div>
+      <img class="auth-character" src="/assets/amiya.png" alt="Amiya" />
       <div class="auth-box">
         <div class="auth-logo">
-          <h1>◢ RHODES ISLAND</h1>
-          <p>罗德岛共享书架 · 注册</p>
+          <img src="/assets/rhodes_island.png" alt="Rhodes Island" />
+          <h1>新操作员登记</h1>
+          <p>罗德岛内部电子档案库 · 注册</p>
         </div>
         <div class="panel" id="register-panel">
-          <div class="panel-title">新操作员登记</div>
+          <div class="panel-title">档案录入</div>
           <div id="register-msg"></div>
           <form id="register-form">
             <div class="form-group">
@@ -145,12 +151,12 @@ function renderRegister(container) {
             </div>
             <div class="form-group">
               <label>密码</label>
-              <input type="password" id="reg-password" required placeholder="至少6位" />
+              <input type="password" id="reg-password" required placeholder='至少 6 位' />
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%">注册</button>
           </form>
           <p style="text-align:center;margin-top:16px;color:var(--text-secondary);font-size:0.9rem">
-            已有账号？ <a href="#/login" style="color:var(--accent)">登录</a>
+            已有账号？<a href="#/login">登录</a>
           </p>
         </div>
       </div>
@@ -196,12 +202,18 @@ function escapeHtml(text) {
 }
 
 function topBar() {
+  const roleBadge = state.user && state.user.role === 'admin'
+    ? '<span class="user-role">Admin</span>'
+    : '';
   const userInfo = state.user
-    ? `<span style="color:var(--text-secondary);font-family:var(--font-mono);font-size:0.85rem">${state.user.email}${state.user.role === 'admin' ? ' [ADMIN]' : ''}</span>`
+    ? `<span class="user-info">${state.user.email}${roleBadge}</span>`
     : '';
   return `
     <div class="top-bar">
-      <div class="logo" onclick="navigate('/bookshelf')">罗德岛书架</div>
+      <div class="logo" onclick="navigate('/bookshelf')">
+        <img src="/assets/rhodes_island.png" alt="Rhodes Island" />
+        <span class="logo-text">罗德岛书架</span>
+      </div>
       <div class="nav-links">
         ${userInfo}
         <a class="btn" href="#/bookshelf">书架</a>
@@ -230,7 +242,6 @@ async function renderBookshelf(container) {
       return;
     }
 
-    // Group by series
     const seriesMap = {};
     const noSeries = [];
     books.forEach(book => {
@@ -307,15 +318,15 @@ function renderUpload(container) {
         <form id="upload-form">
           <div class="form-group">
             <label>书名</label>
-            <input type="text" id="title" required placeholder="例如：明日方舟 官方漫画集" />
+            <input type="text" id="title" required placeholder='例如：明日方舟 官方漫画集' />
           </div>
           <div class="form-group">
             <label>作者</label>
-            <input type="text" id="author" placeholder="作者名" />
+            <input type="text" id="author" placeholder='作者名' />
           </div>
           <div class="form-group">
             <label>系列名</label>
-            <input type="text" id="series" placeholder="例如：明日方舟官方漫画" />
+            <input type="text" id="series" placeholder='例如：明日方舟官方漫画' />
             <div class="upload-hint">同一系列的书籍会自动归并显示</div>
           </div>
           <div class="form-group">
@@ -381,7 +392,7 @@ async function renderReader(container) {
               <label>字体</label>
               <select id="font-family">
                 <option value="Noto Sans SC" ${state.readerSettings.fontFamily === 'Noto Sans SC' ? 'selected' : ''}>无衬线</option>
-                <option value="serif" ${state.readerSettings.fontFamily === 'serif' ? 'selected' : ''}> serif</option>
+                <option value="serif" ${state.readerSettings.fontFamily === 'serif' ? 'selected' : ''}>serif</option>
                 <option value="monospace" ${state.readerSettings.fontFamily === 'monospace' ? 'selected' : ''}>等宽</option>
               </select>
             </div>
@@ -452,7 +463,6 @@ async function renderEpub(url, host) {
     flow: 'scrolled-doc'
   });
   await rendition.display();
-  // Apply custom styles via rendition themes
   rendition.themes.register('custom', {
     body: {
       'font-size': state.readerSettings.fontSize + 'px !important',
