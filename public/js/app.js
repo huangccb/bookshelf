@@ -7,6 +7,7 @@ const state = {
   user: null,
   books: [],
   currentBook: null,
+  viewMode: localStorage.getItem('viewMode') || 'grid',
   readerSettings: JSON.parse(localStorage.getItem('readerSettings')) || {
     fontSize: 18,
     lineHeight: 1.75,
@@ -253,36 +254,26 @@ async function renderBookshelf(container) {
       }
     });
 
-    let html = `
-      <div class="bookshelf-header">
-        <h2>藏书目录</h2>
+    const viewToggles = `
+      <div class="view-toggle">
+        <button class="btn ${state.viewMode === 'grid' ? 'active' : ''}" onclick="setViewMode('grid')">网格</button>
+        <button class="btn ${state.viewMode === 'list' ? 'active' : ''}" onclick="setViewMode('list')">列表</button>
       </div>
     `;
 
-    Object.keys(seriesMap).sort().forEach(series => {
-      const vols = seriesMap[series].sort((a, b) => (a.volume_number || 0) - (b.volume_number || 0));
-      html += `
-        <div class="series-group">
-          <div class="series-title">
-            <span>${escapeHtml(series)}</span>
-            <span class="badge">${vols.length} 卷</span>
-          </div>
-          <div class="book-grid">
-            ${vols.map(book => bookCard(book)).join('')}
-          </div>
+    let html = `
+      <div class="bookshelf-header">
+        <div class="bookshelf-title">
+          <h2>藏书目录</h2>
+          ${viewToggles}
         </div>
-      `;
-    });
+      </div>
+    `;
 
-    if (noSeries.length > 0) {
-      html += `
-        <div class="series-group">
-          <div class="series-title"><span>单行本</span></div>
-          <div class="book-grid">
-            ${noSeries.map(book => bookCard(book)).join('')}
-          </div>
-        </div>
-      `;
+    if (state.viewMode === 'list') {
+      html += renderListView(seriesMap, noSeries);
+    } else {
+      html += renderGridView(seriesMap, noSeries);
     }
 
     containerEl.innerHTML = html;
@@ -306,6 +297,113 @@ function bookCard(book) {
       <span class="book-format">${book.format}</span>
     </div>
   `;
+}
+
+function setViewMode(mode) {
+  state.viewMode = mode;
+  localStorage.setItem('viewMode', mode);
+  render();
+}
+
+function renderGridView(seriesMap, noSeries) {
+  let html = '';
+  Object.keys(seriesMap).sort().forEach(series => {
+    const vols = seriesMap[series].sort((a, b) => (a.volume_number || 0) - (b.volume_number || 0));
+    html += `
+      <div class="series-group">
+        <div class="series-title">
+          <span>${escapeHtml(series)}</span>
+          <span class="badge">${vols.length} 卷</span>
+        </div>
+        <div class="book-grid">
+          ${vols.map(book => bookCard(book)).join('')}
+        </div>
+      </div>
+    `;
+  });
+
+  if (noSeries.length > 0) {
+    html += `
+      <div class="series-group">
+        <div class="series-title"><span>单行本</span></div>
+        <div class="book-grid">
+          ${noSeries.map(book => bookCard(book)).join('')}
+        </div>
+      </div>
+    `;
+  }
+  return html;
+}
+
+function renderListView(seriesMap, noSeries) {
+  let html = '';
+  Object.keys(seriesMap).sort().forEach(series => {
+    const vols = seriesMap[series].sort((a, b) => (a.volume_number || 0) - (b.volume_number || 0));
+    html += renderListSection(series, vols);
+  });
+
+  if (noSeries.length > 0) {
+    html += renderListSection('单行本', noSeries);
+  }
+  return html;
+}
+
+function renderListSection(title, books) {
+  return `
+    <div class="series-group">
+      <div class="series-title">
+        <span>${escapeHtml(title)}</span>
+        <span class="badge">${books.length} 卷</span>
+      </div>
+      <div class="book-list">
+        <div class="book-list-header">
+          <span class="col-title">书名</span>
+          <span class="col-author">作者</span>
+          <span class="col-volume">卷号</span>
+          <span class="col-format">格式</span>
+          <span class="col-actions">操作</span>
+        </div>
+        ${books.map(book => bookListRow(book)).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function bookListRow(book) {
+  const vol = book.volume_number ? `第 ${book.volume_number} 卷` : '全一册';
+  const filename = `${book.title}.${book.format}`.replace(/[^\u4e00-\u9fa5a-zA-Z0-9_\-.]/g, '_');
+  return `
+    <div class="book-list-row">
+      <span class="col-title" onclick="navigate('/reader/${book.id}')">${escapeHtml(book.title)}</span>
+      <span class="col-author">${escapeHtml(book.author || '未知作者')}</span>
+      <span class="col-volume">${vol}</span>
+      <span class="col-format"><span class="book-format">${book.format}</span></span>
+      <span class="col-actions">
+        <button class="btn btn-sm" onclick="navigate('/reader/${book.id}')">阅读</button>
+        <button class="btn btn-sm" onclick="downloadBook('${book.id}', '${filename}')">下载</button>
+      </span>
+    </div>
+  `;
+}
+
+async function downloadBook(bookId, filename) {
+  try {
+    const res = await fetch(`${API_BASE}/api/books/${bookId}/file`, {
+      headers: { 'Authorization': `Bearer ${state.token}` }
+    });
+    if (!res.ok) throw new Error('下载失败');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('下载失败：' + err.message);
+  }
 }
 
 // Upload page
