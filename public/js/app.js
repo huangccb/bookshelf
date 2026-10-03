@@ -456,7 +456,9 @@ function applyReaderStyles() {
 // EPUB rendering
 async function renderEpub(url, host) {
   host.innerHTML = '<div id="epub-viewer"></div>';
-  const book = ePub(url);
+  const res = await fetch(url, { headers: { 'Authorization': `Bearer ${state.token}` } });
+  const buffer = await res.arrayBuffer();
+  const book = ePub(buffer);
   const rendition = book.renderTo('epub-viewer', {
     width: '100%',
     height: '100%',
@@ -477,7 +479,9 @@ async function renderEpub(url, host) {
 async function renderPdf(url, host) {
   host.innerHTML = '';
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-  const pdf = await pdfjsLib.getDocument(url).promise;
+  const res = await fetch(url, { headers: { 'Authorization': `Bearer ${state.token}` } });
+  const buffer = await res.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const viewport = page.getViewport({ scale: 1.5 });
