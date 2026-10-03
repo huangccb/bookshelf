@@ -87,16 +87,13 @@ function render() {
 function renderLogin(container) {
   container.innerHTML = `
     <div class="auth-page">
-      <div class="auth-bg"></div>
-      <img class="auth-character" src="/assets/kaltsit.png" alt="Kal'tsit" />
       <div class="auth-box">
         <div class="auth-logo">
-          <img src="/assets/rhodes_island.png" alt="Rhodes Island" />
-          <h1>罗德岛书架</h1>
-          <p>罗德岛内部电子档案库 · 登录</p>
+          <h1>资源书架</h1>
+          <p>登录你的账户</p>
         </div>
         <div class="panel" id="login-panel">
-          <div class="panel-title">操作员认证</div>
+          <div class="panel-title">用户登录</div>
           <div id="login-msg"></div>
           <form id="login-form">
             <div class="form-group">
@@ -134,16 +131,13 @@ function renderLogin(container) {
 function renderRegister(container) {
   container.innerHTML = `
     <div class="auth-page">
-      <div class="auth-bg"></div>
-      <img class="auth-character" src="/assets/amiya.png" alt="Amiya" />
       <div class="auth-box">
         <div class="auth-logo">
-          <img src="/assets/rhodes_island.png" alt="Rhodes Island" />
-          <h1>新操作员登记</h1>
-          <p>罗德岛内部电子档案库 · 注册</p>
+          <h1>注册账户</h1>
+          <p>创建新账户以开始使用</p>
         </div>
         <div class="panel" id="register-panel">
-          <div class="panel-title">档案录入</div>
+          <div class="panel-title">填写信息</div>
           <div id="register-msg"></div>
           <form id="register-form">
             <div class="form-group">
@@ -212,8 +206,7 @@ function topBar() {
   return `
     <div class="top-bar">
       <div class="logo" onclick="navigate('/bookshelf')">
-        <img src="/assets/rhodes_island.png" alt="Rhodes Island" />
-        <span class="logo-text">罗德岛书架</span>
+        <span class="logo-text">资源书架</span>
       </div>
       <div class="nav-links">
         ${userInfo}
@@ -255,10 +248,9 @@ async function renderBookshelf(container) {
     });
 
     const viewToggles = `
-      <div class="view-toggle">
-        <button class="btn ${state.viewMode === 'grid' ? 'active' : ''}" onclick="setViewMode('grid')">网格</button>
-        <button class="btn ${state.viewMode === 'list' ? 'active' : ''}" onclick="setViewMode('list')">列表</button>
-      </div>
+      <button class="btn btn-view-toggle" onclick="toggleViewMode()">
+        ${state.viewMode === 'grid' ? '切换为列表' : '切换为网格'}
+      </button>
     `;
 
     let html = `
@@ -299,9 +291,9 @@ function bookCard(book) {
   `;
 }
 
-function setViewMode(mode) {
-  state.viewMode = mode;
-  localStorage.setItem('viewMode', mode);
+function toggleViewMode() {
+  state.viewMode = state.viewMode === 'grid' ? 'list' : 'grid';
+  localStorage.setItem('viewMode', state.viewMode);
   render();
 }
 
