@@ -351,7 +351,7 @@ input[type="file"] {
 /* Grid view */
 .book-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 16px;
 }
 
@@ -364,7 +364,7 @@ input[type="file"] {
   transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
   position: relative;
   overflow: hidden;
-  min-height: 220px;
+  min-height: 150px;
   display: flex;
   flex-direction: column;
   box-shadow: var(--shadow-card);
@@ -377,7 +377,7 @@ input[type="file"] {
 }
 
 .book-cover {
-  height: 100px;
+  height: 64px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -618,6 +618,107 @@ input[type="file"] {
   display: flex;
   justify-content: center;
   margin-bottom: 20px;
+}
+
+
+/* Series detail page */
+.series-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.series-detail-title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.series-detail-subtitle {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.series-book-list {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+
+.series-book-list .book-list-header,
+.series-book-list .book-list-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 100px 80px 180px;
+  align-items: center;
+  padding: 12px 16px;
+  gap: 12px;
+}
+
+.series-book-list .book-list-header {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+
+.series-book-list .book-list-row {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.2s;
+}
+
+.series-book-list .book-list-row:last-child {
+  border-bottom: none;
+}
+
+.series-book-list .book-list-row:hover {
+  background: var(--bg-tertiary);
+}
+
+.series-book-list .book-list-row.active {
+  background: var(--accent-light);
+}
+
+.series-book-list .col-title {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.series-book-list .col-author,
+.series-book-list .col-volume {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.series-book-list .col-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.current-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 4px;
+  font-size: 0.7rem;
+}
+
+/* EPUB chapter */
+.epub-chapter {
+  margin-bottom: 2em;
+}
+
+.epub-chapter-title {
+  font-size: 1.3em;
+  margin-bottom: 0.8em;
 }
 
 /* Responsive */

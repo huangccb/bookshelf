@@ -74,9 +74,14 @@ function render() {
     case '/reader':
       renderReader(app);
       break;
+    case '/series':
+      renderSeries(app);
+      break;
     default:
       if (path.startsWith('/reader/')) {
         renderReader(app);
+      } else if (path.startsWith('/series/')) {
+        renderSeries(app);
       } else {
         renderBookshelf(app);
       }
@@ -218,6 +223,76 @@ function topBar() {
   `;
 }
 
+// Series detail page
+async function renderSeries(container) {
+  const bookId = getRoute().path.split('/').pop();
+  container.innerHTML = '<div class="container"><div class="loading" style="margin:40px auto"></div></div>';
+  try {
+    const books = await api('/api/books', { method: 'GET' });
+    state.books = books;
+    const currentBook = books.find(b => b.id === bookId);
+    if (!currentBook) {
+      container.innerHTML = topBar() + '<div class="container"><div class="message error">书籍不存在</div></div>';
+      return;
+    }
+
+    const seriesName = currentBook.series || '';
+    const seriesBooks = seriesName
+      ? books.filter(b => b.series === seriesName).sort((a, b) => (a.volume_number || 0) - (b.volume_number || 0))
+      : [currentBook];
+
+    let html = topBar() + `
+      <div class="container">
+        <div class="series-detail-header">
+          <button class="btn" onclick="navigate('/bookshelf')">← 返回书架</button>
+          <div>
+            <h1 class="series-detail-title">${escapeHtml(seriesName || currentBook.title)}</h1>
+            <p class="series-detail-subtitle">${seriesName ? '系列 ' + seriesBooks.length + ' 卷' : '单行本'}</p>
+          </div>
+        </div>
+
+        <div class="series-book-list">
+          <div class="book-list-header">
+            <span class="col-title">书名</span>
+            <span class="col-author">作者</span>
+            <span class="col-volume">卷号</span>
+            <span class="col-format">格式</span>
+            <span class="col-actions">操作</span>
+          </div>
+    `;
+
+    for (const book of seriesBooks) {
+      const vol = book.volume_number ? `第 ${book.volume_number} 卷` : '全一册';
+      const filename = `${book.title}.${book.format}`.replace(/[^\u4e00-\u9fa5a-zA-Z0-9_\-.]/g, '_');
+      const isActive = book.id === bookId;
+      html += `
+        <div class="book-list-row ${isActive ? 'active' : ''}">
+          <span class="col-title">${escapeHtml(book.title)}${isActive ? ' <span class="current-badge">当前</span>' : ''}</span>
+          <span class="col-author">${escapeHtml(book.author || '未知作者')}</span>
+          <span class="col-volume">${vol}</span>
+          <span class="col-format"><span class="book-format">${book.format}</span></span>
+          <span class="col-actions">
+            <button class="btn btn-primary btn-sm" onclick="navigate('/reader/${book.id}')">阅读</button>
+            <button class="btn btn-sm" onclick="downloadBook('${book.id}', '${filename}')">下载</button>
+          </span>
+        </div>
+      `;
+    }
+
+    html += `
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = topBar() + `<div class="container"><div class="message error">加载失败：${escapeHtml(err.message)}</div></div>`;
+    if (err.message.includes('未登录') || err.message.includes('过期')) {
+      logout();
+    }
+  }
+}
+
 // Bookshelf page
 async function renderBookshelf(container) {
   container.innerHTML = topBar() + '<div class="container" id="bookshelf-container"><div class="loading"></div></div>';
@@ -280,7 +355,7 @@ async function renderBookshelf(container) {
 function bookCard(book) {
   const vol = book.volume_number ? `第 ${book.volume_number} 卷` : '全一册';
   return `
-    <div class="book-card" onclick="navigate('/reader/${book.id}')">
+    <div class="book-card" onclick="navigate('/series/${book.id}')">
       <div class="book-cover">
         ${escapeHtml(book.series || book.title)}
       </div>
@@ -366,7 +441,7 @@ function bookListRow(book) {
   const filename = `${book.title}.${book.format}`.replace(/[^\u4e00-\u9fa5a-zA-Z0-9_\-.]/g, '_');
   return `
     <div class="book-list-row">
-      <span class="col-title" onclick="navigate('/reader/${book.id}')">${escapeHtml(book.title)}</span>
+      <span class="col-title" onclick="navigate('/series/${book.id}')">${escapeHtml(book.title)}</span>
       <span class="col-author">${escapeHtml(book.author || '未知作者')}</span>
       <span class="col-volume">${vol}</span>
       <span class="col-format"><span class="book-format">${book.format}</span></span>
@@ -543,26 +618,26 @@ function applyReaderStyles() {
   host.style.fontFamily = state.readerSettings.fontFamily;
 }
 
-// EPUB rendering
+// EPUB rendering (server-side extraction)
 async function renderEpub(url, host) {
-  host.innerHTML = '<div id="epub-viewer"></div>';
-  const res = await fetch(url, { headers: { 'Authorization': `Bearer ${state.token}` } });
-  const buffer = await res.arrayBuffer();
-  const book = ePub(buffer);
-  const rendition = book.renderTo('epub-viewer', {
-    width: '100%',
-    height: '100%',
-    flow: 'scrolled-doc'
-  });
-  await rendition.display();
-  rendition.themes.register('custom', {
-    body: {
-      'font-size': state.readerSettings.fontSize + 'px !important',
-      'line-height': state.readerSettings.lineHeight + ' !important',
-      'font-family': state.readerSettings.fontFamily + ' !important'
+  const bookId = getRoute().path.split('/').pop();
+  const data = await api(`/api/books/${bookId}/content`, { method: 'GET' });
+  if (data.chapters && data.chapters.length > 0) {
+    let html = '';
+    for (const ch of data.chapters) {
+      html += `<div class="epub-chapter"><h2 class="epub-chapter-title">${escapeHtml(ch.title)}</h2>`;
+      // Extract body content from XHTML
+      const bodyMatch = ch.html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      let content = bodyMatch ? bodyMatch[1] : ch.html;
+      // Remove script/style tags
+      content = content.replace(/<script[\s\S]*?<\/script>/gi, '');
+      content = content.replace(/<style[\s\S]*?<\/style>/gi, '');
+      html += content + '</div>';
     }
-  });
-  rendition.themes.select('custom');
+    host.innerHTML = html;
+  } else {
+    host.innerHTML = `<div class="empty-state"><h3>无法解析 EPUB 内容</h3></div>`;
+  }
 }
 
 // PDF rendering

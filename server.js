@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
+const { extractEpub } = require('./epub_extract');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -172,6 +173,32 @@ app.post('/api/books/:id/progress', authenticateToken, (req, res) => {
 app.get('/api/books/:id/progress', authenticateToken, (req, res) => {
   const row = db.get('reading_progress').find(p => p.user_id === req.user.id && p.book_id === req.params.id);
   res.json({ location: row ? JSON.parse(row.location) : null });
+});
+
+
+// Book content extraction (for online reading)
+app.get('/api/books/:id/content', authenticateToken, async (req, res) => {
+  const book = db.get('books').find(b => b.id === req.params.id);
+  if (!book) return res.status(404).json({ error: '书籍不存在' });
+  const filePath = path.join(uploadsDir, book.file_path);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: '文件不存在' });
+  const buffer = fs.readFileSync(filePath);
+  try {
+    if (book.format === 'epub') {
+      const data = await extractEpub(buffer);
+      return res.json({ format: 'epub', title: book.title, chapters: data.chapters });
+    }
+    if (book.format === 'txt') {
+      return res.json({ format: 'txt', title: book.title, text: buffer.toString('utf8') });
+    }
+    if (book.format === 'docx' || book.format === 'pdf' || book.format === 'mobi' || book.format === 'azw3') {
+      // Binary formats: front-end handles them
+      return res.json({ format: book.format, title: book.title, file_url: `/api/books/${book.id}/file` });
+    }
+    return res.json({ format: book.format, title: book.title, file_url: `/api/books/${book.id}/file` });
+  } catch (e) {
+    return res.status(500).json({ error: '内容解析失败：' + e.message });
+  }
 });
 
 // Serve SPA
