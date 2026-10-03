@@ -573,13 +573,13 @@ async function renderReader(container) {
     bindReaderControls();
 
     if (book.format === 'epub') {
-      await renderEpub(fileUrl, host);
+      await renderEpub(fileUrl, host, bookId);
     } else if (book.format === 'pdf') {
-      await renderPdf(fileUrl, host);
+      await renderPdf(fileUrl, host, bookId);
     } else if (book.format === 'docx') {
-      await renderDocx(fileUrl, host);
+      await renderDocx(fileUrl, host, bookId);
     } else if (book.format === 'txt') {
-      await renderTxt(fileUrl, host);
+      await renderTxt(fileUrl, host, bookId);
     } else {
       host.innerHTML = `<div class="empty-state"><h3>暂不支持在线阅读的格式</h3><p>请下载后阅读</p></div>`;
     }
@@ -619,24 +619,31 @@ function applyReaderStyles() {
 }
 
 // EPUB rendering (server-side extraction)
-async function renderEpub(url, host) {
-  const bookId = getRoute().path.split('/').pop();
-  const data = await api(`/api/books/${bookId}/content`, { method: 'GET' });
-  if (data.chapters && data.chapters.length > 0) {
-    let html = '';
-    for (const ch of data.chapters) {
-      html += `<div class="epub-chapter"><h2 class="epub-chapter-title">${escapeHtml(ch.title)}</h2>`;
-      // Extract body content from XHTML
-      const bodyMatch = ch.html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-      let content = bodyMatch ? bodyMatch[1] : ch.html;
-      // Remove script/style tags
-      content = content.replace(/<script[\s\S]*?<\/script>/gi, '');
-      content = content.replace(/<style[\s\S]*?<\/style>/gi, '');
-      html += content + '</div>';
+async function renderEpub(url, host, bookId) {
+  try {
+    const data = await api(`/api/books/${bookId}/content`, { method: 'GET' });
+    if (data.error) throw new Error(data.error);
+    if (data.chapters && data.chapters.length > 0) {
+      let html = '';
+      for (const ch of data.chapters) {
+        html += '<div class="epub-chapter"><h2 class="epub-chapter-title">' + escapeHtml(ch.title) + '</h2>';
+        // Extract body content from XHTML
+        var bodyMatch = ch.html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+        var content = bodyMatch ? bodyMatch[1] : ch.html;
+        // Remove script/style/link tags and XML/DOCTYPE declarations
+        content = content.replace(/<script[\s\S]*?<\/script>/gi, '');
+        content = content.replace(/<style[\s\S]*?<\/style>/gi, '');
+        content = content.replace(/<link[^>]*>/gi, '');
+        content = content.replace(/<\?xml[^>]*>/gi, '');
+        content = content.replace(/<!DOCTYPE[^>]*>/gi, '');
+        html += content + '</div>';
+      }
+      host.innerHTML = html;
+    } else {
+      host.innerHTML = '<div class="empty-state"><h3>无法解析 EPUB 内容</h3><p>该文件可能格式异常</p></div>';
     }
-    host.innerHTML = html;
-  } else {
-    host.innerHTML = `<div class="empty-state"><h3>无法解析 EPUB 内容</h3></div>`;
+  } catch (err) {
+    host.innerHTML = '<div class="empty-state"><h3>EPUB 加载失败</h3><p>' + escapeHtml(err.message) + '</p></div>';
   }
 }
 
