@@ -4,3 +4,7 @@ data.json
 *.log
 .DS_Store
 .env
+
+# 服务日志
+server.log
+.server.pid
