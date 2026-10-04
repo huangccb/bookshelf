@@ -10,12 +10,13 @@ const state = {
   viewMode: localStorage.getItem('viewMode') || 'grid',
   metaResults: [],
   pendingCoverUrl: '',
-  readerSettings: JSON.parse(localStorage.getItem('readerSettings')) || {
+  readerSettings: Object.assign({
     fontSize: 18,
     lineHeight: 1.75,
     theme: 'dark',
-    fontFamily: 'Noto Sans SC'
-  }
+    fontFamily: 'Noto Sans SC',
+    imgScale: 100
+  }, JSON.parse(localStorage.getItem('readerSettings')) || {})
 };
 
 // API helpers
@@ -481,61 +482,9 @@ async function renderBookDetail(container) {
           </div>
         </div>
 
-        <div class="panel">
-          <div class="panel-title">元数据</div>
-          <div id="meta-msg"></div>
-          <div class="upload-hint">下方字段可直接修改；需要检索封面与简介，请在「上传书籍」页面搜索。</div>
-
-          <form id="meta-form">
-            <div class="form-row">
-              <div class="form-group">
-                <label>书名</label>
-                <input type="text" id="meta-title" value="${escapeAttr(current.title)}" />
-              </div>
-              <div class="form-group">
-                <label>作者</label>
-                <input type="text" id="meta-author" value="${escapeAttr(current.author || '')}" />
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label>系列名</label>
-                <input type="text" id="meta-series" value="${escapeAttr(current.series || '')}" placeholder='留空表示单行本' />
-              </div>
-              <div class="form-group">
-                <label>卷号</label>
-                <input type="number" id="meta-volume" min="0" value="${escapeAttr(current.volume_number || 0)}" />
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label>出版年</label>
-                <input type="text" id="meta-year" value="${escapeAttr(current.publish_year || '')}" placeholder='例如：2012-8' />
-              </div>
-              <div class="form-group">
-                <label>出版社</label>
-                <input type="text" id="meta-publisher" value="${escapeAttr(current.publisher || '')}" />
-              </div>
-            </div>
-            <div class="form-group">
-              <label>ISBN</label>
-              <input type="text" id="meta-isbn" value="${escapeAttr(current.isbn || '')}" />
-            </div>
-            <div class="form-group">
-              <label>简介</label>
-              <textarea id="meta-description" rows="6" placeholder='可以自行填写或修改简介'>${escapeHtml(current.description || '')}</textarea>
-            </div>
-            <div class="meta-actions">
-              <button type="submit" class="btn btn-primary">保存元数据</button>
-              <button type="button" class="btn btn-danger" onclick="removeCover()">删除封面</button>
-            </div>
-          </form>
-        </div>
       </div>
     `;
 
-    state.pendingCoverUrl = '';
-    document.getElementById('meta-form').addEventListener('submit', saveMetadata);
   } catch (err) {
     container.innerHTML = topBar() + `<div class="container"><div class="message error">加载失败：${escapeHtml(err.message)}</div></div>`;
     if (err.message.includes('未登录') || err.message.includes('过期')) {
@@ -615,37 +564,7 @@ function renderUploadCoverPreview(coverUrl) {
   `;
 }
 
-async function saveMetadata(event) {
-  if (event) event.preventDefault();
-  const bookId = currentId();
-  const payload = {
-    title: document.getElementById('meta-title').value,
-    author: document.getElementById('meta-author').value,
-    series: document.getElementById('meta-series').value,
-    volume_number: document.getElementById('meta-volume').value || '0',
-    publish_year: document.getElementById('meta-year').value,
-    publisher: document.getElementById('meta-publisher').value,
-    isbn: document.getElementById('meta-isbn').value,
-    description: document.getElementById('meta-description').value
-  };
-  try {
-    await api('/api/books/' + bookId, { method: 'PUT', body: payload });
-    showMsg('meta-msg', '元数据已保存', false);
-    setTimeout(() => render(), 700);
-  } catch (err) {
-    showMsg('meta-msg', err.message, true);
-  }
-}
 
-async function removeCover() {
-  const bookId = currentId();
-  try {
-    await api('/api/books/' + bookId + '/cover', { method: 'DELETE' });
-    render();
-  } catch (err) {
-    showMsg('meta-msg', '删除封面失败：' + err.message, true);
-  }
-}
 
 async function downloadBook(bookId, filename) {
   try {
@@ -790,6 +709,9 @@ async function renderReader(container) {
                 <option value="serif" ${state.readerSettings.fontFamily === 'serif' ? 'selected' : ''}>serif</option>
                 <option value="monospace" ${state.readerSettings.fontFamily === 'monospace' ? 'selected' : ''}>等宽</option>
               </select>
+              <label>图片</label>
+              <input type="range" id="img-scale" min="50" max="200" step="10" value="${state.readerSettings.imgScale}" />
+              <span class="range-value" id="img-scale-value">${state.readerSettings.imgScale}%</span>
             </div>
           </div>
         </div>
@@ -823,12 +745,16 @@ function bindReaderControls() {
   const lineHeight = document.getElementById('line-height');
   const theme = document.getElementById('theme');
   const fontFamily = document.getElementById('font-family');
+  const imgScale = document.getElementById('img-scale');
+  const imgScaleValue = document.getElementById('img-scale-value');
 
   const update = () => {
     state.readerSettings.fontSize = parseInt(fontSize.value);
     state.readerSettings.lineHeight = parseFloat(lineHeight.value);
     state.readerSettings.theme = theme.value;
     state.readerSettings.fontFamily = fontFamily.value;
+    state.readerSettings.imgScale = parseInt(imgScale.value);
+    if (imgScaleValue) imgScaleValue.textContent = imgScale.value + '%';
     localStorage.setItem('readerSettings', JSON.stringify(state.readerSettings));
     applyReaderStyles();
   };
@@ -837,6 +763,7 @@ function bindReaderControls() {
   lineHeight.addEventListener('input', update);
   theme.addEventListener('change', update);
   fontFamily.addEventListener('change', update);
+  imgScale.addEventListener('input', update);
 }
 
 function applyReaderStyles() {
@@ -846,6 +773,8 @@ function applyReaderStyles() {
   host.style.fontSize = state.readerSettings.fontSize + 'px';
   host.style.lineHeight = state.readerSettings.lineHeight;
   host.style.fontFamily = state.readerSettings.fontFamily;
+  // 图片缩放：以阅读区宽度为 100%
+  host.style.setProperty('--img-scale', (state.readerSettings.imgScale || 100) / 100);
 }
 
 // EPUB rendering (server-side extraction)
@@ -884,9 +813,14 @@ async function renderPdf(url, host) {
   const res = await fetch(url, { headers: { 'Authorization': `Bearer ${state.token}` } });
   const buffer = await res.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  // 以容器宽度为基准渲染，并按设备像素比提升清晰度，放大后依然清晰
+  const containerWidth = host.clientWidth || window.innerWidth || 800;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 1.5 });
+    const base = page.getViewport({ scale: 1 });
+    const fitScale = Math.max(0.5, Math.min(3, (containerWidth / base.width) * dpr));
+    const viewport = page.getViewport({ scale: fitScale });
     const canvas = document.createElement('canvas');
     canvas.className = 'pdf-page';
     const context = canvas.getContext('2d');

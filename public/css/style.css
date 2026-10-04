@@ -592,6 +592,14 @@ input[type="file"] {
   width: auto;
 }
 
+.range-value {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  min-width: 2.8em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .reader-content {
   flex: 1;
   overflow: auto;
@@ -625,6 +633,28 @@ input[type="file"] {
   text-align: justify;
 }
 
+/* 阅读区媒体自适应：默认不超过阅读区宽度，--img-scale 控制自定义缩放 */
+.reader-text img,
+.reader-text svg,
+.reader-text video {
+  max-width: calc(100% * var(--img-scale, 1)) !important;
+  height: auto !important;
+  display: block;
+  margin: 1em auto;
+}
+
+.reader-text figure {
+  max-width: 100%;
+  margin: 1em 0;
+}
+
+/* 宽表格在窄屏可横向滚动，避免撑破页面 */
+.reader-text table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 /* Loading */
 .loading {
   display: inline-block;
@@ -652,9 +682,13 @@ input[type="file"] {
 }
 
 .pdf-page {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 20px;
+  display: block;
+  width: auto;
+  max-width: calc(100% * var(--img-scale, 1));
+  height: auto;
+  margin: 0 auto 20px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
 }
 
 

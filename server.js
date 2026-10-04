@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
+const JSZip = require('jszip');
 const { extractEpub } = require('./epub_extract');
 const metadata = require('./metadata');
 
@@ -44,6 +45,21 @@ function authenticateToken(req, res, next) {
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) return res.status(403).json({ error: '登录已过期' });
     req.user = user;
+    req.token = token;
+    next();
+  });
+}
+
+// img / video 等标签无法携带请求头，允许从查询参数取令牌
+function authenticateTokenOrQuery(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  let token = authHeader && authHeader.split(' ')[1];
+  if (!token && req.query.token) token = req.query.token.toString();
+  if (!token) return res.status(401).json({ error: '未登录' });
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ error: '登录已过期' });
+    req.user = user;
+    req.token = token;
     next();
   });
 }
@@ -271,6 +287,48 @@ app.get('/api/books/:id/cover', (req, res) => {
   res.sendFile(filePath);
 });
 
+// EPUB 内嵌资源（图片、字体等）：img 标签无法带请求头，故允许从查询参数取令牌
+const RESOURCE_MIME = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+  webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon',
+  ttf: 'font/ttf', otf: 'font/otf', woff: 'font/woff', woff2: 'font/woff2',
+  mp3: 'audio/mpeg', m4a: 'audio/mp4', mp4: 'video/mp4', webm: 'video/webm', ogg: 'audio/ogg'
+};
+
+// 按书籍缓存解压结果，避免每张图都重新解包
+const epubZipCache = new Map();
+async function getEpubZip(book) {
+  const filePath = path.join(uploadsDir, book.file_path);
+  const stat = fs.statSync(filePath);
+  const cached = epubZipCache.get(book.id);
+  if (cached && cached.mtime === stat.mtimeMs) return cached.zip;
+  const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
+  epubZipCache.set(book.id, { zip, mtime: stat.mtimeMs });
+  return zip;
+}
+
+app.get('/api/books/:id/resource', authenticateTokenOrQuery, async (req, res) => {
+  const book = db.get('books').find(b => b.id === req.params.id);
+  if (!book) return res.status(404).end();
+  const rel = (req.query.path || '').toString();
+  // 只允许读取 EPUB 内部路径，拒绝目录穿越
+  if (!rel || rel.includes('..') || rel.startsWith('/')) return res.status(400).end();
+  const filePath = path.join(uploadsDir, book.file_path);
+  if (!fs.existsSync(filePath)) return res.status(404).end();
+  try {
+    const zip = await getEpubZip(book);
+    const entry = zip.file(rel);
+    if (!entry) return res.status(404).end();
+    const buf = await entry.async('nodebuffer');
+    const ext = path.extname(rel).toLowerCase().replace('.', '');
+    res.setHeader('Content-Type', RESOURCE_MIME[ext] || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.end(buf);
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
 app.get('/api/books/:id/file', authenticateToken, (req, res) => {
   const book = db.get('books').find(b => b.id === req.params.id);
   if (!book) return res.status(404).json({ error: '书籍不存在' });
@@ -307,7 +365,7 @@ app.get('/api/books/:id/content', authenticateToken, async (req, res) => {
   const buffer = fs.readFileSync(filePath);
   try {
     if (book.format === 'epub') {
-      const data = await extractEpub(buffer);
+      const data = await extractEpub(buffer, { bookId: book.id, token: req.token });
       return res.json({ format: 'epub', title: book.title, chapters: data.chapters });
     }
     if (book.format === 'txt') {
