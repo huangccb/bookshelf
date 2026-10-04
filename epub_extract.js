@@ -1,5 +1,6 @@
 // Server-side EPUB extraction helper
 const JSZip = require('jszip');
+const { decodeText } = require('./text_decode');
 
 // 把相对路径按章节所在目录归一化，处理 ../ 与开头斜杠
 function resolvePath(baseDir, rel) {
@@ -128,7 +129,8 @@ async function extractEpub(buffer, options = {}) {
     const fullHref = opfDir + item.href;
     const file = zip.file(fullHref);
     if (!file) continue;
-    let html = await file.async('text');
+    const rawBuffer = await file.async('nodebuffer');
+    let html = decodeText(rawBuffer);
     const hrefBase = item.href.split('#')[0];
     // 章节内相对资源按章节所在目录解析
     if (bookId) {

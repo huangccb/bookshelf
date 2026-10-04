@@ -8,6 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
 const JSZip = require('jszip');
 const { extractEpub } = require('./epub_extract');
+const { decodeText } = require('./text_decode');
 const metadata = require('./metadata');
 
 const app = express();
@@ -110,6 +111,12 @@ app.post('/api/auth/login', (req, res) => {
 app.get('/api/auth/me', authenticateToken, (req, res) => {
   res.json({ user: req.user });
 });
+
+// 管理员或上传者本人可以修改书籍
+function canEditBook(user, book) {
+  if (!user || !book) return false;
+  return user.role === 'admin' || book.created_by === user.id;
+}
 
 // Admin middleware
 function requireAdmin(req, res, next) {
@@ -229,7 +236,7 @@ app.get('/api/books', authenticateToken, (req, res) => {
   const books = db.get('books').sort((a, b) => {
     if (a.series !== b.series) return (a.series || '').localeCompare(b.series || '');
     return (a.volume_number || 0) - (b.volume_number || 0);
-  });
+  }).map(b => Object.assign({}, b, { can_edit: canEditBook(req.user, b) }));
   res.json(books);
 });
 
@@ -237,13 +244,16 @@ app.get('/api/books/:id', authenticateToken, (req, res) => {
   const book = db.get('books').find(b => b.id === req.params.id);
   if (!book) return res.status(404).json({ error: '书籍不存在' });
   const { file_path, ...rest } = book;
-  res.json(rest);
+  res.json(Object.assign({}, rest, { can_edit: canEditBook(req.user, book) }));
 });
 
 // 更新元数据（可同时替换封面）
 app.put('/api/books/:id', authenticateToken, async (req, res) => {
   const book = db.get('books').find(b => b.id === req.params.id);
   if (!book) return res.status(404).json({ error: '书籍不存在' });
+  if (!canEditBook(req.user, book)) {
+    return res.status(403).json({ error: '只能修改自己上传的书籍' });
+  }
   const b = req.body || {};
   const patch = {};
   for (const key of ['title', 'author', 'series', 'description', 'publish_year', 'publisher', 'isbn', 'pages']) {
@@ -268,6 +278,9 @@ app.put('/api/books/:id', authenticateToken, async (req, res) => {
 app.delete('/api/books/:id/cover', authenticateToken, (req, res) => {
   const book = db.get('books').find(b => b.id === req.params.id);
   if (!book) return res.status(404).json({ error: '书籍不存在' });
+  if (!canEditBook(req.user, book)) {
+    return res.status(403).json({ error: '只能修改自己上传的书籍' });
+  }
   for (const old of fs.readdirSync(coversDir)) {
     if (old.startsWith(book.id + '.')) {
       try { fs.unlinkSync(path.join(coversDir, old)); } catch (e) {}
@@ -369,7 +382,8 @@ app.get('/api/books/:id/content', authenticateToken, async (req, res) => {
       return res.json({ format: 'epub', title: book.title, chapters: data.chapters });
     }
     if (book.format === 'txt') {
-      return res.json({ format: 'txt', title: book.title, text: buffer.toString('utf8') });
+      // 中文 TXT 常见 GBK / Big5，按探测结果解码
+      return res.json({ format: 'txt', title: book.title, text: decodeText(buffer) });
     }
     if (book.format === 'docx' || book.format === 'pdf' || book.format === 'mobi' || book.format === 'azw3') {
       // Binary formats: front-end handles them

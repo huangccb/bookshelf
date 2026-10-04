@@ -919,6 +919,14 @@ input[type="file"] {
   font-size: 0.85rem;
 }
 
+/* 详情页底部的修改入口 */
+.detail-edit-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
 .current-badge {
   display: inline-block;
   margin-left: 6px;

@@ -84,11 +84,16 @@ function render() {
     case '/book':
       renderBookDetail(app);
       break;
+    case '/edit':
+      renderBookEdit(app);
+      break;
     default:
       if (path.startsWith('/reader/')) {
         renderReader(app);
       } else if (path.startsWith('/book/') || path.startsWith('/series/')) {
         renderBookDetail(app);
+      } else if (path.startsWith('/edit/')) {
+        renderBookEdit(app);
       } else {
         renderBookshelf(app);
       }
@@ -482,6 +487,11 @@ async function renderBookDetail(container) {
           </div>
         </div>
 
+        ${current.can_edit ? `
+          <div class="detail-edit-bar">
+            <button class="btn btn-primary" onclick="navigate('/edit/${current.id}')">修改</button>
+          </div>
+        ` : ''}
       </div>
     `;
 
@@ -583,6 +593,120 @@ async function downloadBook(bookId, filename) {
     URL.revokeObjectURL(url);
   } catch (err) {
     alert('下载失败：' + err.message);
+  }
+}
+
+// ---------- 修改书籍 ----------
+
+async function renderBookEdit(container) {
+  const bookId = currentId();
+  container.innerHTML = topBar() + '<div class="container"><div class="loading"></div></div>';
+  try {
+    const book = await api('/api/books/' + bookId, { method: 'GET' });
+    if (!book.can_edit) {
+      container.innerHTML = topBar() + '<div class="container"><div class="message error">你没有修改这本书的权限</div></div>';
+      return;
+    }
+    container.innerHTML = topBar() + `
+      <div class="container">
+        <div class="detail-topbar">
+          <button class="btn" onclick="navigate('/book/${bookId}')">← 返回详情</button>
+        </div>
+        <div class="panel panel-narrow">
+          <div class="panel-title">修改书籍信息</div>
+          <div id="edit-msg"></div>
+          <form id="edit-form">
+            <div class="form-group">
+              <label>书名</label>
+              <input type="text" id="edit-title" required value="${escapeAttr(book.title)}" />
+            </div>
+            <div class="form-group">
+              <label>作者</label>
+              <input type="text" id="edit-author" value="${escapeAttr(book.author || '')}" />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>系列名</label>
+                <input type="text" id="edit-series" value="${escapeAttr(book.series || '')}" placeholder='留空表示单行本' />
+              </div>
+              <div class="form-group">
+                <label>卷号</label>
+                <input type="number" id="edit-volume" min="0" value="${escapeAttr(book.volume_number || 0)}" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>出版年</label>
+                <input type="text" id="edit-year" value="${escapeAttr(book.publish_year || '')}" placeholder='例如：2012-8' />
+              </div>
+              <div class="form-group">
+                <label>出版社</label>
+                <input type="text" id="edit-publisher" value="${escapeAttr(book.publisher || '')}" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>ISBN</label>
+              <input type="text" id="edit-isbn" value="${escapeAttr(book.isbn || '')}" />
+            </div>
+            <div class="form-group">
+              <label>简介</label>
+              <textarea id="edit-description" rows="6" placeholder='可自行填写或修改'>${escapeHtml(book.description || '')}</textarea>
+            </div>
+            <div class="form-group">
+              <label>封面地址</label>
+              <input type="text" id="edit-cover" placeholder='留空则保持当前封面' />
+              <div class="upload-hint">支持豆瓣图书封面地址；留空表示不修改封面</div>
+            </div>
+            <div class="meta-actions">
+              <button type="submit" class="btn btn-primary">保存修改</button>
+              ${book.cover ? '<button type="button" class="btn btn-danger" onclick="removeCover()">删除封面</button>' : ''}
+              <button type="button" class="btn" onclick="navigate('/book/${bookId}')">取消</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+    document.getElementById('edit-form').addEventListener('submit', saveBookEdit);
+  } catch (err) {
+    container.innerHTML = topBar() + `<div class="container"><div class="message error">加载失败：${escapeHtml(err.message)}</div></div>`;
+    if (err.message.includes('未登录') || err.message.includes('过期')) {
+      logout();
+    }
+  }
+}
+
+async function saveBookEdit(event) {
+  if (event) event.preventDefault();
+  const bookId = currentId();
+  const payload = {
+    title: document.getElementById('edit-title').value,
+    author: document.getElementById('edit-author').value,
+    series: document.getElementById('edit-series').value,
+    volume_number: document.getElementById('edit-volume').value || '0',
+    publish_year: document.getElementById('edit-year').value,
+    publisher: document.getElementById('edit-publisher').value,
+    isbn: document.getElementById('edit-isbn').value,
+    description: document.getElementById('edit-description').value
+  };
+  const coverUrl = document.getElementById('edit-cover').value.trim();
+  if (coverUrl) payload.cover_url = coverUrl;
+  try {
+    await api('/api/books/' + bookId, { method: 'PUT', body: payload });
+    showMsg('edit-msg', '已保存，正在返回详情…', false);
+    setTimeout(() => navigate('/book/' + bookId), 700);
+  } catch (err) {
+    showMsg('edit-msg', err.message, true);
+  }
+}
+
+async function removeCover() {
+  const bookId = currentId();
+  try {
+    await api('/api/books/' + bookId + '/cover', { method: 'DELETE' });
+    showMsg('edit-msg', '封面已删除', false);
+    setTimeout(() => render(), 700);
+  } catch (err) {
+    showMsg('edit-msg', err.message, true);
   }
 }
 
@@ -847,6 +971,22 @@ async function renderTxt(url, host) {
   host.innerHTML = paragraphs;
 }
 
+// 刷新页面后凭本地令牌取回用户信息，供顶栏与权限判断使用
+async function restoreSession() {
+  if (!state.token) return;
+  try {
+    const data = await api('/api/auth/me', { method: 'GET' });
+    state.user = data.user;
+  } catch (e) {
+    state.token = null;
+    state.user = null;
+    localStorage.removeItem('token');
+  }
+}
+
 // Init
 window.addEventListener('hashchange', render);
-window.addEventListener('load', render);
+window.addEventListener('load', async () => {
+  await restoreSession();
+  render();
+});
