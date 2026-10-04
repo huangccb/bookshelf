@@ -34,6 +34,9 @@ body {
   font-family: var(--font-ui);
   font-size: 16px;
   line-height: 1.75;
+  /* 阻止移动浏览器自动放大正文 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 #app {
