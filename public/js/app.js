@@ -484,12 +484,7 @@ async function renderBookDetail(container) {
         <div class="panel">
           <div class="panel-title">元数据</div>
           <div id="meta-msg"></div>
-          <div class="meta-search">
-            <input type="text" id="meta-query" placeholder='输入书名搜索元数据' value="${escapeAttr(current.title)}" />
-            <button class="btn btn-primary" onclick="searchMetadata()">搜索元数据</button>
-          </div>
-          <div class="upload-hint">从豆瓣图书检索封面、作者、出版年份与简介；点选结果后自动填入下方表单。</div>
-          <div id="meta-results" class="meta-results"></div>
+          <div class="upload-hint">下方字段可直接修改；需要检索封面与简介，请在「上传书籍」页面搜索。</div>
 
           <form id="meta-form">
             <div class="form-row">
@@ -549,23 +544,24 @@ async function renderBookDetail(container) {
   }
 }
 
-async function searchMetadata() {
-  const q = document.getElementById('meta-query').value.trim();
-  const box = document.getElementById('meta-results');
-  if (!q) {
+// 通用：检索元数据并渲染候选列表
+async function searchMetadataList(query, resultsId, applyFn) {
+  const box = document.getElementById(resultsId);
+  if (!box) return;
+  if (!query) {
     box.innerHTML = '<div class="message error">请先输入书名</div>';
     return;
   }
   box.innerHTML = '<div class="loading"></div>';
   try {
-    const data = await api('/api/metadata/search?q=' + encodeURIComponent(q));
+    const data = await api('/api/metadata/search?q=' + encodeURIComponent(query));
     state.metaResults = data.results || [];
     if (state.metaResults.length === 0) {
-      box.innerHTML = '<div class="meta-empty">没有找到匹配的元数据，可在下方手动填写。</div>';
+      box.innerHTML = '<div class="meta-empty">没有找到匹配的元数据，可手动填写。</div>';
       return;
     }
     box.innerHTML = state.metaResults.map(r => `
-      <div class="meta-result" onclick="applyMetadata('${escapeAttr(r.id)}')">
+      <div class="meta-result" onclick="${applyFn}('${escapeAttr(r.id)}')">
         <div class="meta-result-cover">
           ${r.cover ? `<img src="${API_BASE}/api/metadata/cover?url=${encodeURIComponent(r.cover)}" alt="" loading="lazy" />` : ''}
         </div>
@@ -580,22 +576,43 @@ async function searchMetadata() {
   }
 }
 
-async function applyMetadata(id) {
-  const box = document.getElementById('meta-results');
+function searchMetadataForUpload() {
+  const q = document.getElementById('title').value.trim();
+  return searchMetadataList(q, 'upload-meta-results', 'applyMetadataToUpload');
+}
+
+async function applyMetadataToUpload(id) {
+  const box = document.getElementById('upload-meta-results');
   box.innerHTML = '<div class="loading"></div>';
   try {
     const d = await api('/api/metadata/detail?id=' + encodeURIComponent(id));
-    if (d.title) document.getElementById('meta-title').value = d.title;
-    if (d.author) document.getElementById('meta-author').value = d.author;
-    if (d.year) document.getElementById('meta-year').value = d.year;
-    if (d.publisher) document.getElementById('meta-publisher').value = d.publisher;
-    if (d.isbn) document.getElementById('meta-isbn').value = d.isbn;
-    if (d.description) document.getElementById('meta-description').value = d.description;
+    if (d.title) document.getElementById('title').value = d.title;
+    document.getElementById('author').value = d.author || '';
+    document.getElementById('publish_year').value = d.year || '';
+    document.getElementById('publisher').value = d.publisher || '';
+    document.getElementById('isbn').value = d.isbn || '';
+    if (d.description) document.getElementById('description').value = d.description;
     state.pendingCoverUrl = d.cover || '';
-    box.innerHTML = `<div class="meta-applied">已填入「${escapeHtml(d.title || '')}」的元数据${state.pendingCoverUrl ? '与封面' : ''}，确认后点击「保存元数据」。</div>`;
+    renderUploadCoverPreview(d.cover);
+    box.innerHTML = `<div class="meta-applied">已填入「${escapeHtml(d.title || '')}」的元数据${d.cover ? '与封面' : ''}，确认后点击「上传」。</div>`;
   } catch (err) {
     box.innerHTML = `<div class="message error">${escapeHtml(err.message)}</div>`;
   }
+}
+
+function renderUploadCoverPreview(coverUrl) {
+  const el = document.getElementById('upload-cover-preview');
+  if (!el) return;
+  if (!coverUrl) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `
+    <div class="upload-cover-preview">
+      <img src="${API_BASE}/api/metadata/cover?url=${encodeURIComponent(coverUrl)}" alt="封面预览" />
+      <span class="upload-cover-label">封面预览</span>
+    </div>
+  `;
 }
 
 async function saveMetadata(event) {
@@ -611,10 +628,8 @@ async function saveMetadata(event) {
     isbn: document.getElementById('meta-isbn').value,
     description: document.getElementById('meta-description').value
   };
-  if (state.pendingCoverUrl) payload.cover_url = state.pendingCoverUrl;
   try {
     await api('/api/books/' + bookId, { method: 'PUT', body: payload });
-    state.pendingCoverUrl = '';
     showMsg('meta-msg', '元数据已保存', false);
     setTimeout(() => render(), 700);
   } catch (err) {
@@ -655,40 +670,66 @@ async function downloadBook(bookId, filename) {
 // ---------- 上传 ----------
 
 function renderUpload(container) {
+  state.pendingCoverUrl = '';
   container.innerHTML = topBar() + `
     <div class="container">
-      <div class="panel" style="max-width:600px;margin:0 auto">
+      <div class="panel panel-narrow">
         <div class="panel-title">上传新书</div>
         <div id="upload-msg"></div>
         <form id="upload-form">
           <div class="form-group">
             <label>书名</label>
-            <input type="text" id="title" required placeholder='例如：活着' />
+            <div class="meta-search">
+              <input type="text" id="title" required placeholder='例如：活着' />
+              <button type="button" class="btn btn-primary" onclick="searchMetadataForUpload()">搜索元数据</button>
+            </div>
+            <div class="upload-hint">输入书名后点「搜索元数据」，可自动补全作者、出版年、出版社、简介与封面</div>
           </div>
+
+          <div id="upload-meta-results" class="meta-results"></div>
+
           <div class="form-group">
             <label>作者</label>
             <input type="text" id="author" placeholder='作者名' />
           </div>
-          <div class="form-group">
-            <label>系列名</label>
-            <input type="text" id="series" placeholder='同一系列的书籍填同一个系列名' />
-            <div class="upload-hint">同一系列的书籍会自动归并为一部作品展示</div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>出版年</label>
+              <input type="text" id="publish_year" placeholder='例如：2012-8' />
+            </div>
+            <div class="form-group">
+              <label>出版社</label>
+              <input type="text" id="publisher" placeholder='出版社' />
+            </div>
           </div>
           <div class="form-group">
-            <label>卷号</label>
-            <input type="number" id="volume_number" min="0" placeholder="1" />
-            <div class="upload-hint">0 表示无卷号</div>
+            <label>ISBN</label>
+            <input type="text" id="isbn" placeholder='ISBN' />
+          </div>
+          <div class="form-group">
+            <label>简介</label>
+            <textarea id="description" rows="5" placeholder='可自动填入，也可自行填写或修改'></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>系列名</label>
+              <input type="text" id="series" placeholder='同一系列的书籍填同一个系列名' />
+              <div class="upload-hint">同一系列会自动归并为一部作品</div>
+            </div>
+            <div class="form-group">
+              <label>卷号</label>
+              <input type="number" id="volume_number" min="0" placeholder="1" />
+              <div class="upload-hint">0 表示无卷号</div>
+            </div>
           </div>
           <div class="form-group">
             <label>书籍文件</label>
             <input type="file" id="file" accept=".epub,.pdf,.txt,.docx,.mobi,.azw3" required />
             <div class="upload-hint">支持 EPUB、PDF、TXT、DOCX、MOBI、AZW3</div>
           </div>
+          <div id="upload-cover-preview"></div>
           <button type="submit" class="btn btn-primary" style="width:100%">上传</button>
         </form>
-        <div class="upload-hint" style="margin-top:12px">
-          上传后可在书籍详情页搜索元数据，自动补全封面、作者、出版年份与简介。
-        </div>
       </div>
     </div>
   `;
@@ -697,8 +738,13 @@ function renderUpload(container) {
     const formData = new FormData();
     formData.append('title', document.getElementById('title').value);
     formData.append('author', document.getElementById('author').value);
+    formData.append('publish_year', document.getElementById('publish_year').value);
+    formData.append('publisher', document.getElementById('publisher').value);
+    formData.append('isbn', document.getElementById('isbn').value);
+    formData.append('description', document.getElementById('description').value);
     formData.append('series', document.getElementById('series').value);
     formData.append('volume_number', document.getElementById('volume_number').value || '0');
+    if (state.pendingCoverUrl) formData.append('cover_url', state.pendingCoverUrl);
     formData.append('file', document.getElementById('file').files[0]);
     try {
       const created = await api('/api/books', { method: 'POST', body: formData });

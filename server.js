@@ -175,8 +175,8 @@ async function saveCoverFromUrl(bookId, coverUrl) {
   return filename;
 }
 
-app.post('/api/books', authenticateToken, upload.single('file'), (req, res) => {
-  const { title, author, series, volume_number, description, publish_year, publisher, isbn } = req.body;
+app.post('/api/books', authenticateToken, upload.single('file'), async (req, res) => {
+  const { title, author, series, volume_number, description, publish_year, publisher, isbn, cover_url } = req.body;
   if (!req.file || !title) return res.status(400).json({ error: '缺少文件或标题' });
   const id = uuidv4();
   const format = path.extname(req.file.originalname).toLowerCase().replace('.', '');
@@ -197,8 +197,16 @@ app.post('/api/books', authenticateToken, upload.single('file'), (req, res) => {
     created_by: req.user.id,
     created_at: new Date().toISOString()
   };
+  // 上传时若附带封面地址，一并抓取；失败不阻断上传
+  if (cover_url) {
+    try {
+      book.cover = await saveCoverFromUrl(id, cover_url);
+    } catch (e) {
+      console.warn('[Cover] 上传时封面保存失败:', e.message);
+    }
+  }
   db.insert('books', book);
-  res.json({ id, title, author, series, volume_number: book.volume_number, format, file_size: req.file.size });
+  res.json({ id, title, author, series, volume_number: book.volume_number, format, file_size: req.file.size, cover: book.cover });
 });
 
 app.get('/api/books', authenticateToken, (req, res) => {

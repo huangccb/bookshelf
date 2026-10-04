@@ -34,9 +34,14 @@ case "$1" in
       exit 0
     fi
     nohup node "$APP" > "$LOG" 2>&1 &
-    sleep 2
-    if is_up; then
-      echo "服务已启动"
+    # 轮询等待端口就绪：首次启动要建管理员账户，耗时可能超过 10 秒
+    ready=0
+    for _ in $(seq 1 40); do
+      sleep 0.5
+      if is_up; then ready=1; break; fi
+    done
+    if [ "$ready" = "1" ]; then
+      echo "服务已启动 (PID $(find_pid))"
       echo "访问地址: http://localhost:${PORT}"
     else
       echo "启动失败，最后 20 行日志："

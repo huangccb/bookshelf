@@ -66,7 +66,7 @@ a:hover {
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  padding: 24px;
+  padding: clamp(12px, 3.5vw, 24px);
 }
 
 /* Header */
@@ -74,7 +74,7 @@ a:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 24px;
+  padding: clamp(10px, 2.5vw, 14px) clamp(12px, 3.5vw, 24px);
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
   position: sticky;
@@ -88,7 +88,7 @@ a:hover {
   align-items: center;
   gap: 12px;
   cursor: pointer;
-  font-size: 1.25rem;
+  font-size: clamp(1.02rem, 3.2vw, 1.25rem);
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -177,9 +177,14 @@ a:hover {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 28px;
-  margin-bottom: 24px;
+  padding: clamp(16px, 4vw, 28px);
+  margin-bottom: clamp(16px, 3vw, 24px);
   box-shadow: var(--shadow-card);
+}
+
+.panel-narrow {
+  max-width: 640px;
+  margin: 0 auto;
 }
 
 .panel-title {
@@ -208,7 +213,7 @@ input,
 select,
 textarea {
   width: 100%;
-  padding: 12px 14px;
+  padding: clamp(9px, 2.4vw, 12px) clamp(11px, 2.8vw, 14px);
   background: var(--bg-secondary);
   border: 1px solid var(--border-strong);
   color: var(--text-primary);
@@ -238,7 +243,7 @@ input[type="file"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: clamp(16px, 5vw, 24px);
   background: var(--bg-primary);
 }
 
@@ -253,7 +258,7 @@ input[type="file"] {
 }
 
 .auth-logo h1 {
-  font-size: 1.75rem;
+  font-size: clamp(1.4rem, 5vw, 1.75rem);
   color: var(--text-primary);
   margin: 0;
 }
@@ -291,7 +296,7 @@ input[type="file"] {
 .bookshelf-header h2 {
   color: var(--text-primary);
   margin: 0;
-  font-size: 1.5rem;
+  font-size: clamp(1.15rem, 3.5vw, 1.5rem);
   font-weight: 600;
 }
 
@@ -495,6 +500,31 @@ input[type="file"] {
   line-height: 1.6;
 }
 
+.upload-cover-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 16px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.upload-cover-preview img {
+  width: 60px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+}
+
+.upload-cover-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
 /* Reader */
 .reader-page {
   position: fixed;
@@ -512,10 +542,10 @@ input[type="file"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 24px;
+  padding: clamp(8px, 2.2vw, 12px) clamp(12px, 3.5vw, 24px);
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
-  gap: 16px;
+  gap: 12px;
   flex-wrap: wrap;
   box-shadow: var(--shadow);
 }
@@ -562,7 +592,7 @@ input[type="file"] {
 .reader-content {
   flex: 1;
   overflow: auto;
-  padding: 32px;
+  padding: clamp(14px, 4vw, 32px);
   line-height: 1.75;
   font-size: 18px;
 }
@@ -659,7 +689,7 @@ input[type="file"] {
 
 .book-detail-title {
   margin: 0 0 8px;
-  font-size: 1.75rem;
+  font-size: clamp(1.25rem, 4.5vw, 1.75rem);
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.5;
@@ -873,23 +903,98 @@ input[type="file"] {
 }
 
 /* Responsive */
+/* 移动端适配 */
 @media (max-width: 768px) {
+  .top-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .nav-links {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .nav-links .btn {
+    padding: 7px 12px;
+    font-size: 0.85rem;
+  }
+
+  .user-info {
+    display: none;
+  }
+
+  .bookshelf-header {
+    margin-bottom: 18px;
+  }
+
   .bookshelf-title {
-    flex-direction: column;
-    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
   }
 
   .book-grid {
-    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 10px;
+  }
+
+  .book-card {
+    padding: 8px;
+  }
+
+  .book-title {
+    font-size: 0.85rem;
+  }
+
+  .book-meta {
+    font-size: 0.72rem;
+  }
+
+  /* 列表行改为两栏卡片式，避免固定列宽在窄屏溢出 */
+  .book-list-header {
+    display: none;
+  }
+
+  .book-list-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .book-list-row .col-title {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .book-list-row .row-title-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .book-list-row .col-author,
+  .book-list-row .col-volume {
+    display: none;
+  }
+
+  .book-list-row .col-actions {
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+
+  .btn-sm {
+    padding: 5px 10px;
+    font-size: 0.8rem;
   }
 
   .book-detail {
     grid-template-columns: 1fr;
-    gap: 20px;
+    gap: 18px;
   }
 
   .book-detail-cover {
-    max-width: 180px;
+    max-width: 150px;
   }
 
   .form-row {
@@ -901,24 +1006,59 @@ input[type="file"] {
     flex-direction: column;
   }
 
-  .book-list-header,
-  .book-list-row {
-    grid-template-columns: 1fr 80px;
-    gap: 8px;
-  }
-
-  .book-list-header .col-author,
-  .book-list-header .col-volume,
-  .book-list-row .col-author,
-  .book-list-row .col-volume {
-    display: none;
+  .meta-search .btn {
+    width: 100%;
   }
 
   .reader-toolbar {
-    padding: 10px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
   }
 
-  .reader-content {
-    padding: 16px;
+  .reader-toolbar-left {
+    justify-content: space-between;
+  }
+
+  .reader-title {
+    max-width: 55vw;
+    font-size: 0.9rem;
+  }
+
+  .reader-controls {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .reader-controls input[type="range"] {
+    width: 88px;
+  }
+}
+
+@media (max-width: 420px) {
+  .panel {
+    padding: 14px;
+  }
+
+  .book-grid {
+    grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+    gap: 8px;
+  }
+
+  .book-detail-cover {
+    max-width: 118px;
+  }
+
+  .meta-list {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .reader-controls label {
+    font-size: 0.72rem;
+  }
+
+  .reader-controls input[type="range"] {
+    width: 68px;
   }
 }
