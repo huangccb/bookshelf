@@ -8,6 +8,8 @@ const state = {
   books: [],
   currentBook: null,
   viewMode: localStorage.getItem('viewMode') || 'grid',
+  metaResults: [],
+  pendingCoverUrl: '',
   readerSettings: JSON.parse(localStorage.getItem('readerSettings')) || {
     fontSize: 18,
     lineHeight: 1.75,
@@ -47,6 +49,10 @@ function getRoute() {
   return { path, query };
 }
 
+function currentId() {
+  return getRoute().path.split('/').pop();
+}
+
 // Render the current page
 function render() {
   const app = document.getElementById('app');
@@ -74,14 +80,14 @@ function render() {
     case '/reader':
       renderReader(app);
       break;
-    case '/series':
-      renderSeries(app);
+    case '/book':
+      renderBookDetail(app);
       break;
     default:
       if (path.startsWith('/reader/')) {
         renderReader(app);
-      } else if (path.startsWith('/series/')) {
-        renderSeries(app);
+      } else if (path.startsWith('/book/') || path.startsWith('/series/')) {
+        renderBookDetail(app);
       } else {
         renderBookshelf(app);
       }
@@ -197,8 +203,21 @@ function showMsg(id, text, isError) {
 
 function escapeHtml(text) {
   const div = document.createElement('div');
-  div.textContent = text;
+  div.textContent = text == null ? '' : text;
   return div.innerHTML;
+}
+
+function escapeAttr(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeFilename(book) {
+  return `${book.title}.${book.format}`.replace(/[^\u4e00-\u9fa5a-zA-Z0-9_\-.]/g, '_');
 }
 
 function topBar() {
@@ -206,7 +225,7 @@ function topBar() {
     ? '<span class="user-role">Admin</span>'
     : '';
   const userInfo = state.user
-    ? `<span class="user-info">${state.user.email}${roleBadge}</span>`
+    ? `<span class="user-info">${escapeHtml(state.user.email)}${roleBadge}</span>`
     : '';
   return `
     <div class="top-bar">
@@ -223,145 +242,68 @@ function topBar() {
   `;
 }
 
-// Series detail page
-async function renderSeries(container) {
-  const bookId = getRoute().path.split('/').pop();
-  container.innerHTML = '<div class="container"><div class="loading" style="margin:40px auto"></div></div>';
-  try {
-    const books = await api('/api/books', { method: 'GET' });
-    state.books = books;
-    const currentBook = books.find(b => b.id === bookId);
-    if (!currentBook) {
-      container.innerHTML = topBar() + '<div class="container"><div class="message error">书籍不存在</div></div>';
-      return;
-    }
+// ---------- 书架 ----------
 
-    const seriesName = currentBook.series || '';
-    const seriesBooks = seriesName
-      ? books.filter(b => b.series === seriesName).sort((a, b) => (a.volume_number || 0) - (b.volume_number || 0))
-      : [currentBook];
-
-    let html = topBar() + `
-      <div class="container">
-        <div class="series-detail-header">
-          <button class="btn" onclick="navigate('/bookshelf')">← 返回书架</button>
-          <div>
-            <h1 class="series-detail-title">${escapeHtml(seriesName || currentBook.title)}</h1>
-            <p class="series-detail-subtitle">${seriesName ? '系列 ' + seriesBooks.length + ' 卷' : '单行本'}</p>
-          </div>
-        </div>
-
-        <div class="series-book-list">
-          <div class="book-list-header">
-            <span class="col-title">书名</span>
-            <span class="col-author">作者</span>
-            <span class="col-volume">卷号</span>
-            <span class="col-format">格式</span>
-            <span class="col-actions">操作</span>
-          </div>
-    `;
-
-    for (const book of seriesBooks) {
-      const vol = book.volume_number ? `第 ${book.volume_number} 卷` : '全一册';
-      const filename = `${book.title}.${book.format}`.replace(/[^\u4e00-\u9fa5a-zA-Z0-9_\-.]/g, '_');
-      const isActive = book.id === bookId;
-      html += `
-        <div class="book-list-row ${isActive ? 'active' : ''}">
-          <span class="col-title">${escapeHtml(book.title)}${isActive ? ' <span class="current-badge">当前</span>' : ''}</span>
-          <span class="col-author">${escapeHtml(book.author || '未知作者')}</span>
-          <span class="col-volume">${vol}</span>
-          <span class="col-format"><span class="book-format">${book.format}</span></span>
-          <span class="col-actions">
-            <button class="btn btn-primary btn-sm" onclick="navigate('/reader/${book.id}')">阅读</button>
-            <button class="btn btn-sm" onclick="downloadBook('${book.id}', '${filename}')">下载</button>
-          </span>
-        </div>
-      `;
-    }
-
-    html += `
-        </div>
-      </div>
-    `;
-
-    container.innerHTML = html;
-  } catch (err) {
-    container.innerHTML = topBar() + `<div class="container"><div class="message error">加载失败：${escapeHtml(err.message)}</div></div>`;
-    if (err.message.includes('未登录') || err.message.includes('过期')) {
-      logout();
-    }
-  }
-}
-
-// Bookshelf page
-async function renderBookshelf(container) {
-  container.innerHTML = topBar() + '<div class="container" id="bookshelf-container"><div class="loading"></div></div>';
-  try {
-    const books = await api('/api/books', { method: 'GET' });
-    state.books = books;
-    const containerEl = document.getElementById('bookshelf-container');
-    if (books.length === 0) {
-      containerEl.innerHTML = `
-        <div class="empty-state">
-          <h3>书架为空</h3>
-          <p>点击上方“上传书籍”添加你的第一本藏书吧。</p>
-          <a href="#/upload" class="btn btn-primary" style="margin-top:16px">上传书籍</a>
-        </div>
-      `;
-      return;
-    }
-
-    const seriesMap = {};
-    const noSeries = [];
-    books.forEach(book => {
-      if (book.series) {
-        if (!seriesMap[book.series]) seriesMap[book.series] = [];
-        seriesMap[book.series].push(book);
-      } else {
-        noSeries.push(book);
-      }
-    });
-
-    const viewToggles = `
-      <button class="btn btn-view-toggle" onclick="toggleViewMode()">
-        ${state.viewMode === 'grid' ? '切换为列表' : '切换为网格'}
-      </button>
-    `;
-
-    let html = `
-      <div class="bookshelf-header">
-        <div class="bookshelf-title">
-          <h2>藏书目录</h2>
-          ${viewToggles}
-        </div>
-      </div>
-    `;
-
-    if (state.viewMode === 'list') {
-      html += renderListView(seriesMap, noSeries);
+// 把书按系列归并：一个系列 = 一个条目，用第 1 本书（有封面的优先）代表它
+function buildEntries(books) {
+  const seriesMap = new Map();
+  const singles = [];
+  books.forEach(book => {
+    if (book.series) {
+      if (!seriesMap.has(book.series)) seriesMap.set(book.series, []);
+      seriesMap.get(book.series).push(book);
     } else {
-      html += renderGridView(seriesMap, noSeries);
+      singles.push(book);
     }
+  });
 
-    containerEl.innerHTML = html;
-  } catch (err) {
-    container.innerHTML = topBar() + `<div class="container"><div class="message error">加载失败：${escapeHtml(err.message)}</div></div>`;
-    if (err.message.includes('未登录') || err.message.includes('过期')) {
-      logout();
-    }
-  }
+  const entries = [];
+  seriesMap.forEach((vols, name) => {
+    vols.sort((a, b) => (a.volume_number || 0) - (b.volume_number || 0));
+    entries.push({
+      type: 'series',
+      name,
+      books: vols,
+      first: vols[0],
+      cover: vols.find(b => b.cover) || vols[0]
+    });
+  });
+  singles.forEach(book => {
+    entries.push({ type: 'single', name: book.title, books: [book], first: book, cover: book });
+  });
+
+  return entries.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
 }
 
-function bookCard(book) {
-  const vol = book.volume_number ? `第 ${book.volume_number} 卷` : '全一册';
+// 封面：有图用图，没图用书名文字占位
+function coverBlock(book, extraClass) {
+  if (!book) return '';
+  const cls = extraClass ? ' ' + extraClass : '';
+  if (book.cover) {
+    return `<img class="book-cover-img${cls}" src="${API_BASE}/api/books/${book.id}/cover" alt="${escapeAttr(book.title)}" loading="lazy" />`;
+  }
+  return `<div class="book-cover-fallback${cls}">${escapeHtml(book.title)}</div>`;
+}
+
+function bookCard(entry) {
+  const isSeries = entry.type === 'series';
+  const count = entry.books.length;
+  const first = entry.first;
+  const metaParts = [first.author || '未知作者'];
+  if (isSeries) {
+    metaParts.push(count + ' 卷');
+  } else if (first.volume_number) {
+    metaParts.push('第 ' + first.volume_number + ' 卷');
+  }
+  const badge = isSeries ? `<span class="cover-badge">${count} 卷</span>` : '';
   return `
-    <div class="book-card" onclick="navigate('/series/${book.id}')">
+    <div class="book-card" onclick="navigate('/book/${first.id}')">
       <div class="book-cover">
-        ${escapeHtml(book.series || book.title)}
+        ${coverBlock(entry.cover)}
+        ${badge}
       </div>
-      <div class="book-title">${escapeHtml(book.title)}</div>
-      <div class="book-meta">${escapeHtml(book.author || '未知作者')} · ${vol}</div>
-      <span class="book-format">${book.format}</span>
+      <div class="book-title">${escapeHtml(entry.name)}</div>
+      <div class="book-meta">${escapeHtml(metaParts.join(' · '))}</div>
     </div>
   `;
 }
@@ -372,85 +314,322 @@ function toggleViewMode() {
   render();
 }
 
-function renderGridView(seriesMap, noSeries) {
-  let html = '';
-  Object.keys(seriesMap).sort().forEach(series => {
-    const vols = seriesMap[series].sort((a, b) => (a.volume_number || 0) - (b.volume_number || 0));
-    html += `
-      <div class="series-group">
-        <div class="series-title">
-          <span>${escapeHtml(series)}</span>
-          <span class="badge">${vols.length} 卷</span>
-        </div>
-        <div class="book-grid">
-          ${vols.map(book => bookCard(book)).join('')}
-        </div>
-      </div>
-    `;
-  });
-
-  if (noSeries.length > 0) {
-    html += `
-      <div class="series-group">
-        <div class="series-title"><span>单行本</span></div>
-        <div class="book-grid">
-          ${noSeries.map(book => bookCard(book)).join('')}
-        </div>
-      </div>
-    `;
-  }
-  return html;
+function renderGridView(entries) {
+  return `<div class="book-grid">${entries.map(bookCard).join('')}</div>`;
 }
 
-function renderListView(seriesMap, noSeries) {
-  let html = '';
-  Object.keys(seriesMap).sort().forEach(series => {
-    const vols = seriesMap[series].sort((a, b) => (a.volume_number || 0) - (b.volume_number || 0));
-    html += renderListSection(series, vols);
-  });
-
-  if (noSeries.length > 0) {
-    html += renderListSection('单行本', noSeries);
-  }
-  return html;
-}
-
-function renderListSection(title, books) {
+function renderListView(entries) {
   return `
-    <div class="series-group">
-      <div class="series-title">
-        <span>${escapeHtml(title)}</span>
-        <span class="badge">${books.length} 卷</span>
+    <div class="book-list">
+      <div class="book-list-header">
+        <span class="col-title">书名</span>
+        <span class="col-author">作者</span>
+        <span class="col-volume">卷册</span>
+        <span class="col-format">格式</span>
+        <span class="col-actions">操作</span>
       </div>
-      <div class="book-list">
-        <div class="book-list-header">
-          <span class="col-title">书名</span>
-          <span class="col-author">作者</span>
-          <span class="col-volume">卷号</span>
-          <span class="col-format">格式</span>
-          <span class="col-actions">操作</span>
-        </div>
-        ${books.map(book => bookListRow(book)).join('')}
-      </div>
+      ${entries.map(bookListRow).join('')}
     </div>
   `;
 }
 
-function bookListRow(book) {
-  const vol = book.volume_number ? `第 ${book.volume_number} 卷` : '全一册';
-  const filename = `${book.title}.${book.format}`.replace(/[^\u4e00-\u9fa5a-zA-Z0-9_\-.]/g, '_');
+function bookListRow(entry) {
+  const isSeries = entry.type === 'series';
+  const first = entry.first;
+  const count = entry.books.length;
+  const formats = [...new Set(entry.books.map(b => b.format))].join(' / ');
+  const volumeText = isSeries
+    ? `${count} 卷`
+    : (first.volume_number ? `第 ${first.volume_number} 卷` : '全一册');
+  const actions = isSeries
+    ? `<button class="btn btn-sm btn-primary" onclick="navigate('/book/${first.id}')">查看</button>`
+    : `<button class="btn btn-sm btn-primary" onclick="navigate('/reader/${first.id}')">阅读</button>
+       <button class="btn btn-sm" onclick="downloadBook('${first.id}', '${safeFilename(first)}')">下载</button>`;
   return `
     <div class="book-list-row">
-      <span class="col-title" onclick="navigate('/series/${book.id}')">${escapeHtml(book.title)}</span>
-      <span class="col-author">${escapeHtml(book.author || '未知作者')}</span>
-      <span class="col-volume">${vol}</span>
-      <span class="col-format"><span class="book-format">${book.format}</span></span>
-      <span class="col-actions">
-        <button class="btn btn-sm" onclick="navigate('/reader/${book.id}')">阅读</button>
-        <button class="btn btn-sm" onclick="downloadBook('${book.id}', '${filename}')">下载</button>
+      <span class="col-title" onclick="navigate('/book/${first.id}')">
+        <span class="row-thumb">${coverBlock(entry.cover)}</span>
+        <span class="row-title-text">${escapeHtml(entry.name)}</span>
       </span>
+      <span class="col-author">${escapeHtml(first.author || '未知作者')}</span>
+      <span class="col-volume">${volumeText}</span>
+      <span class="col-format"><span class="book-format">${escapeHtml(formats)}</span></span>
+      <span class="col-actions">${actions}</span>
     </div>
   `;
+}
+
+async function renderBookshelf(container) {
+  container.innerHTML = topBar() + '<div class="container" id="bookshelf-container"><div class="loading"></div></div>';
+  try {
+    const books = await api('/api/books', { method: 'GET' });
+    state.books = books;
+    const containerEl = document.getElementById('bookshelf-container');
+    if (books.length === 0) {
+      containerEl.innerHTML = `
+        <div class="empty-state">
+          <h3>书架为空</h3>
+          <p>点击上方「上传书籍」添加你的第一本藏书吧。</p>
+          <a href="#/upload" class="btn btn-primary" style="margin-top:16px">上传书籍</a>
+        </div>
+      `;
+      return;
+    }
+
+    const entries = buildEntries(books);
+    const html = `
+      <div class="bookshelf-header">
+        <div class="bookshelf-title">
+          <h2>藏书目录</h2>
+          <span class="bookshelf-count">${entries.length} 部作品 · ${books.length} 个文件</span>
+          <button class="btn btn-view-toggle" onclick="toggleViewMode()">
+            ${state.viewMode === 'grid' ? '切换为列表' : '切换为网格'}
+          </button>
+        </div>
+      </div>
+      ${state.viewMode === 'list' ? renderListView(entries) : renderGridView(entries)}
+    `;
+    containerEl.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = topBar() + `<div class="container"><div class="message error">加载失败：${escapeHtml(err.message)}</div></div>`;
+    if (err.message.includes('未登录') || err.message.includes('过期')) {
+      logout();
+    }
+  }
+}
+
+// ---------- 详情页 ----------
+
+async function renderBookDetail(container) {
+  const bookId = currentId();
+  container.innerHTML = topBar() + '<div class="container"><div class="loading"></div></div>';
+  try {
+    const books = await api('/api/books', { method: 'GET' });
+    state.books = books;
+    const current = books.find(b => b.id === bookId);
+    if (!current) {
+      container.innerHTML = topBar() + '<div class="container"><div class="message error">书籍不存在</div></div>';
+      return;
+    }
+
+    const isSeries = !!current.series;
+    const volumes = isSeries
+      ? books.filter(b => b.series === current.series).sort((a, b) => (a.volume_number || 0) - (b.volume_number || 0))
+      : [current];
+    const coverBook = current.cover ? current : (volumes.find(b => b.cover) || current);
+    const title = isSeries ? current.series : current.title;
+
+    const volumeRows = volumes.map(book => {
+      const vol = book.volume_number ? `第 ${book.volume_number} 卷` : '全一册';
+      const isActive = book.id === current.id;
+      return `
+        <div class="book-list-row${isActive ? ' active' : ''}">
+          <span class="col-title">
+            <span class="row-thumb">${coverBlock(book)}</span>
+            <span class="row-title-text">${escapeHtml(book.title)}${isActive ? ' <span class="current-badge">当前</span>' : ''}</span>
+          </span>
+          <span class="col-author">${escapeHtml(book.author || '未知作者')}</span>
+          <span class="col-volume">${vol}</span>
+          <span class="col-format"><span class="book-format">${escapeHtml(book.format)}</span></span>
+          <span class="col-actions">
+            <button class="btn btn-primary btn-sm" onclick="navigate('/reader/${book.id}')">阅读</button>
+            <button class="btn btn-sm" onclick="downloadBook('${book.id}', '${safeFilename(book)}')">下载</button>
+          </span>
+        </div>
+      `;
+    }).join('');
+
+    container.innerHTML = topBar() + `
+      <div class="container">
+        <div class="detail-topbar">
+          <button class="btn" onclick="navigate('/bookshelf')">← 返回书架</button>
+        </div>
+
+        <div class="book-detail">
+          <div class="book-detail-cover">${coverBlock(coverBook)}</div>
+          <div class="book-detail-info">
+            <h1 class="book-detail-title">${escapeHtml(title)}</h1>
+            <p class="book-detail-author">${escapeHtml(current.author || '未知作者')}</p>
+            <dl class="meta-list">
+              <div><dt>出版年</dt><dd>${escapeHtml(current.publish_year || '—')}</dd></div>
+              <div><dt>出版社</dt><dd>${escapeHtml(current.publisher || '—')}</dd></div>
+              <div><dt>ISBN</dt><dd>${escapeHtml(current.isbn || '—')}</dd></div>
+              <div><dt>系列</dt><dd>${escapeHtml(isSeries ? current.series : '单行本')}</dd></div>
+            </dl>
+            <div class="book-detail-actions">
+              <button class="btn btn-primary" onclick="navigate('/reader/${current.id}')">阅读</button>
+              <button class="btn" onclick="downloadBook('${current.id}', '${safeFilename(current)}')">下载</button>
+            </div>
+            <div class="book-detail-desc">
+              <h3>简介</h3>
+              <p>${current.description ? escapeHtml(current.description) : '暂无简介，可在下方搜索或手动填写。'}</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">${isSeries ? `系列卷册（${volumes.length}）` : '文件'}</div>
+          <div class="book-list">
+            <div class="book-list-header">
+              <span class="col-title">书名</span>
+              <span class="col-author">作者</span>
+              <span class="col-volume">卷号</span>
+              <span class="col-format">格式</span>
+              <span class="col-actions">操作</span>
+            </div>
+            ${volumeRows}
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">元数据</div>
+          <div id="meta-msg"></div>
+          <div class="meta-search">
+            <input type="text" id="meta-query" placeholder='输入书名搜索元数据' value="${escapeAttr(current.title)}" />
+            <button class="btn btn-primary" onclick="searchMetadata()">搜索元数据</button>
+          </div>
+          <div class="upload-hint">从豆瓣图书检索封面、作者、出版年份与简介；点选结果后自动填入下方表单。</div>
+          <div id="meta-results" class="meta-results"></div>
+
+          <form id="meta-form">
+            <div class="form-row">
+              <div class="form-group">
+                <label>书名</label>
+                <input type="text" id="meta-title" value="${escapeAttr(current.title)}" />
+              </div>
+              <div class="form-group">
+                <label>作者</label>
+                <input type="text" id="meta-author" value="${escapeAttr(current.author || '')}" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>系列名</label>
+                <input type="text" id="meta-series" value="${escapeAttr(current.series || '')}" placeholder='留空表示单行本' />
+              </div>
+              <div class="form-group">
+                <label>卷号</label>
+                <input type="number" id="meta-volume" min="0" value="${escapeAttr(current.volume_number || 0)}" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>出版年</label>
+                <input type="text" id="meta-year" value="${escapeAttr(current.publish_year || '')}" placeholder='例如：2012-8' />
+              </div>
+              <div class="form-group">
+                <label>出版社</label>
+                <input type="text" id="meta-publisher" value="${escapeAttr(current.publisher || '')}" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>ISBN</label>
+              <input type="text" id="meta-isbn" value="${escapeAttr(current.isbn || '')}" />
+            </div>
+            <div class="form-group">
+              <label>简介</label>
+              <textarea id="meta-description" rows="6" placeholder='可以自行填写或修改简介'>${escapeHtml(current.description || '')}</textarea>
+            </div>
+            <div class="meta-actions">
+              <button type="submit" class="btn btn-primary">保存元数据</button>
+              <button type="button" class="btn btn-danger" onclick="removeCover()">删除封面</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    state.pendingCoverUrl = '';
+    document.getElementById('meta-form').addEventListener('submit', saveMetadata);
+  } catch (err) {
+    container.innerHTML = topBar() + `<div class="container"><div class="message error">加载失败：${escapeHtml(err.message)}</div></div>`;
+    if (err.message.includes('未登录') || err.message.includes('过期')) {
+      logout();
+    }
+  }
+}
+
+async function searchMetadata() {
+  const q = document.getElementById('meta-query').value.trim();
+  const box = document.getElementById('meta-results');
+  if (!q) {
+    box.innerHTML = '<div class="message error">请先输入书名</div>';
+    return;
+  }
+  box.innerHTML = '<div class="loading"></div>';
+  try {
+    const data = await api('/api/metadata/search?q=' + encodeURIComponent(q));
+    state.metaResults = data.results || [];
+    if (state.metaResults.length === 0) {
+      box.innerHTML = '<div class="meta-empty">没有找到匹配的元数据，可在下方手动填写。</div>';
+      return;
+    }
+    box.innerHTML = state.metaResults.map(r => `
+      <div class="meta-result" onclick="applyMetadata('${escapeAttr(r.id)}')">
+        <div class="meta-result-cover">
+          ${r.cover ? `<img src="${API_BASE}/api/metadata/cover?url=${encodeURIComponent(r.cover)}" alt="" loading="lazy" />` : ''}
+        </div>
+        <div class="meta-result-body">
+          <div class="meta-result-title">${escapeHtml(r.title)}</div>
+          <div class="meta-result-sub">${escapeHtml(r.author || '未知作者')} · ${escapeHtml(r.year || '年份未知')}</div>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    box.innerHTML = `<div class="message error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function applyMetadata(id) {
+  const box = document.getElementById('meta-results');
+  box.innerHTML = '<div class="loading"></div>';
+  try {
+    const d = await api('/api/metadata/detail?id=' + encodeURIComponent(id));
+    if (d.title) document.getElementById('meta-title').value = d.title;
+    if (d.author) document.getElementById('meta-author').value = d.author;
+    if (d.year) document.getElementById('meta-year').value = d.year;
+    if (d.publisher) document.getElementById('meta-publisher').value = d.publisher;
+    if (d.isbn) document.getElementById('meta-isbn').value = d.isbn;
+    if (d.description) document.getElementById('meta-description').value = d.description;
+    state.pendingCoverUrl = d.cover || '';
+    box.innerHTML = `<div class="meta-applied">已填入「${escapeHtml(d.title || '')}」的元数据${state.pendingCoverUrl ? '与封面' : ''}，确认后点击「保存元数据」。</div>`;
+  } catch (err) {
+    box.innerHTML = `<div class="message error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function saveMetadata(event) {
+  if (event) event.preventDefault();
+  const bookId = currentId();
+  const payload = {
+    title: document.getElementById('meta-title').value,
+    author: document.getElementById('meta-author').value,
+    series: document.getElementById('meta-series').value,
+    volume_number: document.getElementById('meta-volume').value || '0',
+    publish_year: document.getElementById('meta-year').value,
+    publisher: document.getElementById('meta-publisher').value,
+    isbn: document.getElementById('meta-isbn').value,
+    description: document.getElementById('meta-description').value
+  };
+  if (state.pendingCoverUrl) payload.cover_url = state.pendingCoverUrl;
+  try {
+    await api('/api/books/' + bookId, { method: 'PUT', body: payload });
+    state.pendingCoverUrl = '';
+    showMsg('meta-msg', '元数据已保存', false);
+    setTimeout(() => render(), 700);
+  } catch (err) {
+    showMsg('meta-msg', err.message, true);
+  }
+}
+
+async function removeCover() {
+  const bookId = currentId();
+  try {
+    await api('/api/books/' + bookId + '/cover', { method: 'DELETE' });
+    render();
+  } catch (err) {
+    showMsg('meta-msg', '删除封面失败：' + err.message, true);
+  }
 }
 
 async function downloadBook(bookId, filename) {
@@ -473,7 +652,8 @@ async function downloadBook(bookId, filename) {
   }
 }
 
-// Upload page
+// ---------- 上传 ----------
+
 function renderUpload(container) {
   container.innerHTML = topBar() + `
     <div class="container">
@@ -483,7 +663,7 @@ function renderUpload(container) {
         <form id="upload-form">
           <div class="form-group">
             <label>书名</label>
-            <input type="text" id="title" required placeholder='例如：明日方舟 官方漫画集' />
+            <input type="text" id="title" required placeholder='例如：活着' />
           </div>
           <div class="form-group">
             <label>作者</label>
@@ -491,8 +671,8 @@ function renderUpload(container) {
           </div>
           <div class="form-group">
             <label>系列名</label>
-            <input type="text" id="series" placeholder='例如：明日方舟官方漫画' />
-            <div class="upload-hint">同一系列的书籍会自动归并显示</div>
+            <input type="text" id="series" placeholder='同一系列的书籍填同一个系列名' />
+            <div class="upload-hint">同一系列的书籍会自动归并为一部作品展示</div>
           </div>
           <div class="form-group">
             <label>卷号</label>
@@ -506,6 +686,9 @@ function renderUpload(container) {
           </div>
           <button type="submit" class="btn btn-primary" style="width:100%">上传</button>
         </form>
+        <div class="upload-hint" style="margin-top:12px">
+          上传后可在书籍详情页搜索元数据，自动补全封面、作者、出版年份与简介。
+        </div>
       </div>
     </div>
   `;
@@ -518,18 +701,19 @@ function renderUpload(container) {
     formData.append('volume_number', document.getElementById('volume_number').value || '0');
     formData.append('file', document.getElementById('file').files[0]);
     try {
-      await api('/api/books', { method: 'POST', body: formData });
+      const created = await api('/api/books', { method: 'POST', body: formData });
       showMsg('upload-msg', '上传成功', false);
-      setTimeout(() => navigate('/bookshelf'), 1000);
+      setTimeout(() => navigate('/book/' + created.id), 900);
     } catch (err) {
       showMsg('upload-msg', err.message, true);
     }
   });
 }
 
-// Reader page
+// ---------- 阅读器 ----------
+
 async function renderReader(container) {
-  const bookId = getRoute().path.split('/').pop();
+  const bookId = currentId();
   container.innerHTML = `<div class="loading" style="position:absolute;top:50%;left:50%"></div>`;
   try {
     const book = await api(`/api/books/${bookId}`, { method: 'GET' });
@@ -539,7 +723,7 @@ async function renderReader(container) {
       <div class="reader-page">
         <div class="reader-toolbar">
           <div class="reader-toolbar-left">
-            <button class="btn" onclick="navigate('/bookshelf')">返回书架</button>
+            <button class="btn" onclick="navigate('/book/${bookId}')">返回详情</button>
             <span class="reader-title">${escapeHtml(book.title)}</span>
           </div>
           <div class="reader-toolbar-right">

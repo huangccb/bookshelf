@@ -7,6 +7,7 @@ const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
 const { extractEpub } = require('./epub_extract');
+const metadata = require('./metadata');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,12 +15,13 @@ const JWT_SECRET = process.env.JWT_SECRET || 'arknights-bookshelf-secret-key';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@rhodes.island';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+const coversDir = path.join(__dirname, 'covers');
+for (const d of [uploadsDir, coversDir]) {
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 }
 
 // Seed default admin
@@ -112,9 +114,69 @@ app.get('/api/admin/books', authenticateToken, requireAdmin, (req, res) => {
   res.json(books);
 });
 
-// Book routes
+// ---------- 元数据检索 ----------
+
+// 按书名搜索候选元数据
+app.get('/api/metadata/search', authenticateToken, async (req, res) => {
+  const q = (req.query.q || '').toString().trim();
+  if (!q) return res.status(400).json({ error: '请输入书名' });
+  try {
+    const results = await metadata.searchBooks(q);
+    res.json({ results });
+  } catch (e) {
+    res.status(502).json({ error: '元数据检索失败：' + e.message });
+  }
+});
+
+// 取某条元数据的详情（简介 / 出版社 / ISBN / 页数）
+app.get('/api/metadata/detail', authenticateToken, async (req, res) => {
+  const id = (req.query.id || '').toString().trim();
+  if (!id) return res.status(400).json({ error: '缺少元数据 ID' });
+  try {
+    const detail = await metadata.getBookDetail(id);
+    res.json(detail);
+  } catch (e) {
+    res.status(502).json({ error: '元数据详情获取失败：' + e.message });
+  }
+});
+
+// 只允许从豆瓣图床抓封面，避免把服务端变成任意 URL 代理
+const COVER_HOST_RE = /^https:\/\/img\d*\.doubanio\.com\//;
+
+// 搜索结果里的封面缩略图代理（img 标签无法带鉴权头，因此不校验登录，但严格限定来源）
+app.get('/api/metadata/cover', async (req, res) => {
+  const url = (req.query.url || '').toString();
+  if (!COVER_HOST_RE.test(url)) return res.status(400).end();
+  try {
+    const { buffer, contentType } = await metadata.downloadCover(url);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.end(buffer);
+  } catch (e) {
+    res.status(502).end();
+  }
+});
+
+// ---------- 书籍 ----------
+
+// 保存封面：下载外链封面并落盘
+async function saveCoverFromUrl(bookId, coverUrl) {
+  if (!COVER_HOST_RE.test(coverUrl)) throw new Error('封面地址不受支持');
+  const { buffer, contentType } = await metadata.downloadCover(coverUrl);
+  const ext = contentType.includes('png') ? '.png' : contentType.includes('webp') ? '.webp' : '.jpg';
+  const filename = bookId + ext;
+  // 清理该书的旧封面
+  for (const old of fs.readdirSync(coversDir)) {
+    if (old.startsWith(bookId + '.')) {
+      try { fs.unlinkSync(path.join(coversDir, old)); } catch (e) {}
+    }
+  }
+  fs.writeFileSync(path.join(coversDir, filename), buffer);
+  return filename;
+}
+
 app.post('/api/books', authenticateToken, upload.single('file'), (req, res) => {
-  const { title, author, series, volume_number } = req.body;
+  const { title, author, series, volume_number, description, publish_year, publisher, isbn } = req.body;
   if (!req.file || !title) return res.status(400).json({ error: '缺少文件或标题' });
   const id = uuidv4();
   const format = path.extname(req.file.originalname).toLowerCase().replace('.', '');
@@ -124,6 +186,11 @@ app.post('/api/books', authenticateToken, upload.single('file'), (req, res) => {
     author: author || '',
     series: series || '',
     volume_number: parseInt(volume_number) || 0,
+    description: description || '',
+    publish_year: publish_year || '',
+    publisher: publisher || '',
+    isbn: isbn || '',
+    cover: '',
     format,
     file_path: req.file.filename,
     file_size: req.file.size,
@@ -147,6 +214,53 @@ app.get('/api/books/:id', authenticateToken, (req, res) => {
   if (!book) return res.status(404).json({ error: '书籍不存在' });
   const { file_path, ...rest } = book;
   res.json(rest);
+});
+
+// 更新元数据（可同时替换封面）
+app.put('/api/books/:id', authenticateToken, async (req, res) => {
+  const book = db.get('books').find(b => b.id === req.params.id);
+  if (!book) return res.status(404).json({ error: '书籍不存在' });
+  const b = req.body || {};
+  const patch = {};
+  for (const key of ['title', 'author', 'series', 'description', 'publish_year', 'publisher', 'isbn', 'pages']) {
+    if (typeof b[key] === 'string') patch[key] = b[key];
+  }
+  if (b.volume_number !== undefined) patch.volume_number = parseInt(b.volume_number) || 0;
+
+  if (b.cover_url) {
+    try {
+      patch.cover = await saveCoverFromUrl(book.id, b.cover_url);
+    } catch (e) {
+      return res.status(502).json({ error: '封面保存失败：' + e.message });
+    }
+  }
+  db.update('books', x => x.id === book.id, x => Object.assign({}, x, patch));
+  const updated = db.get('books').find(x => x.id === book.id);
+  const { file_path, ...rest } = updated;
+  res.json(rest);
+});
+
+// 删除封面
+app.delete('/api/books/:id/cover', authenticateToken, (req, res) => {
+  const book = db.get('books').find(b => b.id === req.params.id);
+  if (!book) return res.status(404).json({ error: '书籍不存在' });
+  for (const old of fs.readdirSync(coversDir)) {
+    if (old.startsWith(book.id + '.')) {
+      try { fs.unlinkSync(path.join(coversDir, old)); } catch (e) {}
+    }
+  }
+  db.update('books', x => x.id === book.id, x => Object.assign({}, x, { cover: '' }));
+  res.json({ success: true });
+});
+
+// 封面图片（供 img 标签直接引用，无需鉴权）
+app.get('/api/books/:id/cover', (req, res) => {
+  const book = db.get('books').find(b => b.id === req.params.id);
+  if (!book || !book.cover) return res.status(404).end();
+  const filePath = path.join(coversDir, path.basename(book.cover));
+  if (!fs.existsSync(filePath)) return res.status(404).end();
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.sendFile(filePath);
 });
 
 app.get('/api/books/:id/file', authenticateToken, (req, res) => {
@@ -207,5 +321,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Arknights Bookshelf running on http://localhost:${PORT}`);
+  console.log(`Bookshelf running on http://localhost:${PORT}`);
 });

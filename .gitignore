@@ -8,3 +8,4 @@ data.json
 # 服务日志
 server.log
 .server.pid
+covers/
