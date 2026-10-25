@@ -963,12 +963,17 @@ async function renderDocx(url, host) {
   host.innerHTML = result.value;
 }
 
-// TXT rendering
-async function renderTxt(url, host) {
-  const res = await fetch(url, { headers: { 'Authorization': `Bearer ${state.token}` } });
-  const text = await res.text();
-  const paragraphs = text.split(/\n{2,}/).map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`).join('');
-  host.innerHTML = paragraphs;
+// TXT rendering：正文由服务端按实际编码解码，避免浏览器按 UTF-8 强解导致乱码
+async function renderTxt(url, host, bookId) {
+  const data = await api(`/api/books/${bookId}/content`, { method: 'GET' });
+  const text = typeof data === 'string' ? data : (data.text || '');
+  const normalized = text.replace(/\r\n?/g, '\n');
+  const paragraphs = normalized
+    .split(/\n\s*\n+/)
+    .filter(p => p.trim() !== '')
+    .map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+    .join('');
+  host.innerHTML = paragraphs || '<p>（正文为空）</p>';
 }
 
 // 刷新页面后凭本地令牌取回用户信息，供顶栏与权限判断使用

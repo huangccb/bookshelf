@@ -371,6 +371,8 @@ app.get('/api/books/:id/progress', authenticateToken, (req, res) => {
 
 // Book content extraction (for online reading)
 app.get('/api/books/:id/content', authenticateToken, async (req, res) => {
+  // 正文不做缓存，避免编码修复后浏览器仍拿到旧结果
+  res.setHeader('Cache-Control', 'no-store');
   const book = db.get('books').find(b => b.id === req.params.id);
   if (!book) return res.status(404).json({ error: '书籍不存在' });
   const filePath = path.join(uploadsDir, book.file_path);
