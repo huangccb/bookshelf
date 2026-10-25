@@ -528,109 +528,184 @@ input[type="file"] {
   color: var(--text-muted);
 }
 
-/* Reader */
+/* ---------- Reader ---------- */
 .reader-page {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: var(--bg-primary);
+  inset: 0;
   z-index: 200;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  background: var(--rd-bg);
+  color: var(--rd-fg);
+  transition: background .2s ease, color .2s ease;
 }
 
-.reader-toolbar {
+/* 配色方案 */
+.reader-page[data-theme="white"] {
+  --rd-bg: #ffffff;
+  --rd-fg: #1a1a1a;
+  --rd-muted: #9b9b9b;
+  --rd-line: rgba(0, 0, 0, .08);
+  --rd-sheet: #f6f6f6;
+  --rd-accent: #3d3d3d;
+}
+
+.reader-page[data-theme="paper"] {
+  --rd-bg: #f7f1e3;
+  --rd-fg: #2f2a21;
+  --rd-muted: #a0957f;
+  --rd-line: rgba(80, 60, 20, .13);
+  --rd-sheet: #fbf6ea;
+  --rd-accent: #9b7434;
+}
+
+.reader-page[data-theme="green"] {
+  --rd-bg: #cfe7d4;
+  --rd-fg: #1f2d24;
+  --rd-muted: #6e8a78;
+  --rd-line: rgba(20, 60, 30, .15);
+  --rd-sheet: #e0f0e4;
+  --rd-accent: #2f6045;
+}
+
+.reader-page[data-theme="dark"] {
+  --rd-bg: #1e2229;
+  --rd-fg: #c9ccd3;
+  --rd-muted: #767c86;
+  --rd-line: rgba(255, 255, 255, .11);
+  --rd-sheet: #262b33;
+  --rd-accent: #c2a878;
+}
+
+/* 顶栏 */
+.reader-topbar {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: clamp(8px, 2.2vw, 12px) clamp(12px, 3.5vw, 24px);
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  gap: 12px;
-  flex-wrap: wrap;
-  box-shadow: var(--shadow);
+  gap: 8px;
+  padding: max(10px, env(safe-area-inset-top)) 12px 8px;
+  color: var(--rd-fg);
 }
 
-.reader-toolbar-left,
-.reader-toolbar-right {
+.reader-back {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--rd-fg);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.reader-title {
-  color: var(--text-primary);
-  font-size: 1rem;
-  font-weight: 600;
-  max-width: 300px;
+.reader-back:active {
+  background: var(--rd-line);
+}
+
+.reader-book-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: var(--rd-fg);
+  opacity: 0.8;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.reader-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.reader-topbar-spacer {
+  width: 36px;
+  flex: 0 0 auto;
 }
 
-.reader-controls label {
-  margin: 0;
-  font-size: 0.8rem;
-  white-space: nowrap;
-}
-
-.reader-controls input[type="range"] {
-  width: 120px;
-}
-
-.reader-controls select {
-  padding: 4px 8px;
-  font-size: 0.85rem;
-  width: auto;
-}
-
-.range-value {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  min-width: 2.8em;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
+/* 正文区 */
 .reader-content {
-  flex: 1;
-  overflow: auto;
-  padding: clamp(14px, 4vw, 32px);
-  line-height: 1.75;
-  font-size: 18px;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px var(--rd-pad-x, 22px) 32px;
+  background: var(--rd-bg);
+  color: var(--rd-fg);
 }
 
-.reader-content.light {
-  background: #ffffff;
-  color: #1f2937;
-}
-
-.reader-content.sepia {
-  background: #f5f0e6;
-  color: #433422;
-}
-
-.reader-content.dark {
-  background: #1f2937;
-  color: #f9fafb;
-}
+.reader-page[data-margin="narrow"] { --rd-pad-x: 14px; }
+.reader-page[data-margin="normal"] { --rd-pad-x: 22px; }
+.reader-page[data-margin="wide"]   { --rd-pad-x: 34px; }
 
 .reader-text {
-  max-width: 42em;
+  max-width: 40em;
   margin: 0 auto;
+  color: var(--rd-fg);
+  text-align: justify;
 }
 
 .reader-text p {
-  margin-bottom: 1em;
+  margin: 0 0 0.85em;
+  text-indent: 2em;
   text-align: justify;
+  word-break: break-word;
+}
+
+.reader-text h1,
+.reader-text h2,
+.reader-text h3,
+.reader-text h4,
+.reader-text h5 {
+  text-indent: 0;
+  color: var(--rd-fg);
+  font-weight: 700;
+  line-height: 1.5;
+  margin: 1.5em 0 0.8em;
+}
+
+.reader-text h1 { font-size: 1.5em; }
+.reader-text h2 { font-size: 1.32em; }
+.reader-text h3 { font-size: 1.15em; }
+.reader-text h4,
+.reader-text h5 { font-size: 1.05em; }
+
+.reader-text blockquote {
+  margin: 1em 0;
+  padding-left: 0.9em;
+  border-left: 3px solid var(--rd-line);
+  opacity: 0.85;
+  text-indent: 0;
+}
+
+.reader-text a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.reader-text ul,
+.reader-text ol {
+  padding-left: 1.6em;
+  margin: 0 0 0.85em;
+}
+
+.reader-text li {
+  text-indent: 0;
+  margin-bottom: 0.3em;
+}
+
+/* EPUB 章节标题 */
+.epub-chapter-title {
+  text-indent: 0;
+  font-size: 1.42em;
+  font-weight: 700;
+  line-height: 1.5;
+  margin: 1.6em 0 0.9em;
+  color: var(--rd-fg);
+}
+
+.epub-chapter:first-child .epub-chapter-title {
+  margin-top: 0.3em;
 }
 
 /* 阅读区媒体自适应：默认不超过阅读区宽度，--img-scale 控制自定义缩放 */
@@ -653,6 +728,245 @@ input[type="file"] {
   display: block;
   max-width: 100%;
   overflow-x: auto;
+}
+
+.pdf-page {
+  display: block;
+  width: auto;
+  max-width: calc(100% * var(--img-scale, 1));
+  height: auto;
+  margin: 0 auto 20px;
+  background: #ffffff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, .12);
+}
+
+/* 底部图标栏 */
+.reader-bottombar {
+  position: relative;
+  z-index: 4;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  height: 52px;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--rd-sheet);
+  border-top: 1px solid var(--rd-line);
+}
+
+.reader-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 42px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--rd-muted);
+  cursor: pointer;
+  transition: color .15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.reader-tab.active {
+  color: var(--rd-accent);
+}
+
+.reader-tab:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.reader-tab-glyph {
+  font-size: 1.15rem;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+/* 上滑设置面板 */
+.reader-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(52px + env(safe-area-inset-bottom));
+  z-index: 3;
+  padding: 18px 20px 20px;
+  border-radius: 16px 16px 0 0;
+  background: var(--rd-sheet);
+  box-shadow: 0 -6px 28px rgba(0, 0, 0, .09);
+  color: var(--rd-fg);
+  transform: translateY(115%);
+  transition: transform .28s cubic-bezier(.32, .72, 0, 1);
+}
+
+.reader-sheet.open {
+  transform: translateY(0);
+}
+
+.reader-sheet-pane {
+  display: none;
+}
+
+.reader-sheet-pane.active {
+  display: block;
+}
+
+.reader-sheet-label {
+  font-size: 0.76rem;
+  color: var(--rd-muted);
+  margin-bottom: 10px;
+}
+
+/* 滑杆行 */
+.reader-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.reader-slider-cap {
+  flex: 0 0 auto;
+  min-width: 2.2em;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--rd-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.reader-slider-cap-lg {
+  font-size: 1.25rem;
+}
+
+.reader-slider-row input[type="range"] {
+  flex: 1;
+  width: auto;
+  accent-color: var(--rd-accent);
+}
+
+/* 分段控件 */
+.reader-seg-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.reader-seg {
+  flex: 1;
+  min-width: 0;
+}
+
+.reader-seg-title {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--rd-muted);
+  margin-bottom: 6px;
+}
+
+.reader-seg-btns {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--rd-line);
+}
+
+.reader-seg-btns button {
+  flex: 1;
+  padding: 7px 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--rd-muted);
+  font-size: 0.82rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+
+.reader-seg-btns button.active {
+  background: var(--rd-bg);
+  color: var(--rd-fg);
+  font-weight: 600;
+}
+
+/* 字体选择 */
+.reader-select-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.reader-select-row label {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--rd-muted);
+}
+
+.reader-select-row select {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--rd-line);
+  border-radius: 9px;
+  background: var(--rd-bg);
+  color: var(--rd-fg);
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+/* 配色选择 */
+.reader-swatches {
+  display: flex;
+  gap: 14px;
+}
+
+.reader-swatches button {
+  width: 48px;
+  height: 34px;
+  border: 1px solid var(--rd-line);
+  border-radius: 10px;
+  background: var(--sw-bg);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.reader-swatches button.active {
+  outline: 2px solid var(--rd-accent);
+  outline-offset: 2px;
+}
+
+/* 目录 */
+.reader-toc {
+  max-height: 44vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.reader-toc-item {
+  display: block;
+  width: 100%;
+  padding: 12px 2px;
+  border: none;
+  border-bottom: 1px solid var(--rd-line);
+  background: transparent;
+  color: var(--rd-fg);
+  font-size: 0.88rem;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reader-toc-item:last-child {
+  border-bottom: none;
+}
+
+.reader-toc-empty {
+  padding: 16px 2px;
+  font-size: 0.85rem;
+  color: var(--rd-muted);
 }
 
 /* Loading */
@@ -679,16 +993,6 @@ input[type="file"] {
 #pdf-viewer {
   width: 100%;
   height: 100%;
-}
-
-.pdf-page {
-  display: block;
-  width: auto;
-  max-width: calc(100% * var(--img-scale, 1));
-  height: auto;
-  margin: 0 auto 20px;
-  background: #ffffff;
-  box-shadow: var(--shadow);
 }
 
 
@@ -1055,28 +1359,12 @@ input[type="file"] {
     width: 100%;
   }
 
-  .reader-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
+  .reader-sheet {
+    padding: 16px 16px 18px;
   }
 
-  .reader-toolbar-left {
-    justify-content: space-between;
-  }
-
-  .reader-title {
-    max-width: 55vw;
-    font-size: 0.9rem;
-  }
-
-  .reader-controls {
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .reader-controls input[type="range"] {
-    width: 88px;
+  .reader-seg-row {
+    gap: 10px;
   }
 }
 
@@ -1099,11 +1387,12 @@ input[type="file"] {
     gap: 8px;
   }
 
-  .reader-controls label {
-    font-size: 0.72rem;
+  .reader-swatches button {
+    width: 42px;
+    height: 32px;
   }
 
-  .reader-controls input[type="range"] {
-    width: 68px;
+  .reader-book-title {
+    font-size: 0.86rem;
   }
 }

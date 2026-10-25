@@ -10,14 +10,41 @@ const state = {
   viewMode: localStorage.getItem('viewMode') || 'grid',
   metaResults: [],
   pendingCoverUrl: '',
-  readerSettings: Object.assign({
-    fontSize: 18,
-    lineHeight: 1.75,
-    theme: 'dark',
-    fontFamily: 'Noto Sans SC',
-    imgScale: 100
-  }, JSON.parse(localStorage.getItem('readerSettings')) || {})
+  readerSettings: loadReaderSettings()
 };
+
+// 读取阅读偏好，并迁移旧版主题名与行距数值
+function loadReaderSettings() {
+  const defaults = {
+    fontSize: 20,
+    lineHeight: 1.9,
+    theme: 'paper',
+    fontFamily: 'Noto Sans SC',
+    imgScale: 100,
+    margin: 'normal'
+  };
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem('readerSettings')) || {};
+  } catch (e) {
+    saved = {};
+  }
+  const settings = Object.assign({}, defaults, saved);
+  if (settings.theme === 'light') settings.theme = 'white';
+  if (settings.theme === 'sepia') settings.theme = 'paper';
+  if (['white', 'paper', 'green', 'dark'].indexOf(settings.theme) < 0) settings.theme = 'paper';
+  if (['narrow', 'normal', 'wide'].indexOf(settings.margin) < 0) settings.margin = 'normal';
+  // 行距对齐到分段控件的三档
+  const steps = [1.6, 1.9, 2.2];
+  let nearest = steps[0];
+  let best = Infinity;
+  for (let i = 0; i < steps.length; i++) {
+    const diff = Math.abs(steps[i] - settings.lineHeight);
+    if (diff < best) { best = diff; nearest = steps[i]; }
+  }
+  settings.lineHeight = nearest;
+  return settings;
+}
 
 // API helpers
 async function api(path, options = {}) {
@@ -809,41 +836,98 @@ async function renderReader(container) {
     state.currentBook = book;
     const fileUrl = `${API_BASE}/api/books/${bookId}/file`;
     container.innerHTML = `
-      <div class="reader-page">
-        <div class="reader-toolbar">
-          <div class="reader-toolbar-left">
-            <button class="btn" onclick="navigate('/book/${bookId}')">返回详情</button>
-            <span class="reader-title">${escapeHtml(book.title)}</span>
-          </div>
-          <div class="reader-toolbar-right">
-            <div class="reader-controls">
-              <label>字号</label>
-              <input type="range" id="font-size" min="12" max="32" value="${state.readerSettings.fontSize}" />
-              <label>行距</label>
-              <input type="range" id="line-height" min="1.2" max="2.5" step="0.1" value="${state.readerSettings.lineHeight}" />
-              <label>主题</label>
-              <select id="theme">
-                <option value="dark" ${state.readerSettings.theme === 'dark' ? 'selected' : ''}>暗色</option>
-                <option value="light" ${state.readerSettings.theme === 'light' ? 'selected' : ''}>浅色</option>
-                <option value="sepia" ${state.readerSettings.theme === 'sepia' ? 'selected' : ''}>羊皮纸</option>
-              </select>
-              <label>字体</label>
+      <div class="reader-page" id="reader-page"
+           data-theme="${state.readerSettings.theme}"
+           data-margin="${state.readerSettings.margin}">
+        <header class="reader-topbar">
+          <button class="reader-back" onclick="navigate('/book/${bookId}')" aria-label="返回详情">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+          </button>
+          <span class="reader-book-title">${escapeHtml(book.title)}</span>
+          <span class="reader-topbar-spacer"></span>
+        </header>
+
+        <div class="reader-content" id="reader-content">
+          <div id="reader-host" class="reader-text"></div>
+        </div>
+
+        <nav class="reader-bottombar">
+          <button class="reader-tab" id="tab-toc" onclick="toggleReaderSheet('toc')" aria-label="目录">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+              <path d="M4 7h16M4 12h16M4 17h11" />
+            </svg>
+          </button>
+          <button class="reader-tab" id="tab-theme" onclick="toggleReaderSheet('theme')" aria-label="背景">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7">
+              <circle cx="12" cy="12" r="8" />
+              <path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none" />
+            </svg>
+          </button>
+          <button class="reader-tab" id="tab-font" onclick="toggleReaderSheet('font')" aria-label="字体">
+            <span class="reader-tab-glyph">A</span>
+          </button>
+        </nav>
+
+        <div class="reader-sheet" id="reader-sheet">
+          <div class="reader-sheet-pane" id="pane-font">
+            <div class="reader-slider-row">
+              <span class="reader-slider-cap">A</span>
+              <input type="range" id="font-size" min="14" max="30" step="1" value="${state.readerSettings.fontSize}" />
+              <span class="reader-slider-cap reader-slider-cap-lg">A</span>
+            </div>
+            <div class="reader-seg-row">
+              <div class="reader-seg">
+                <span class="reader-seg-title">边距</span>
+                <div class="reader-seg-btns" id="seg-margin">
+                  <button data-value="narrow">小</button>
+                  <button data-value="normal">中</button>
+                  <button data-value="wide">大</button>
+                </div>
+              </div>
+              <div class="reader-seg">
+                <span class="reader-seg-title">行距</span>
+                <div class="reader-seg-btns" id="seg-lineheight">
+                  <button data-value="1.6">紧</button>
+                  <button data-value="1.9">中</button>
+                  <button data-value="2.2">松</button>
+                </div>
+              </div>
+            </div>
+            <div class="reader-select-row">
+              <label for="font-family">字体</label>
               <select id="font-family">
-                <option value="Noto Sans SC" ${state.readerSettings.fontFamily === 'Noto Sans SC' ? 'selected' : ''}>无衬线</option>
-                <option value="serif" ${state.readerSettings.fontFamily === 'serif' ? 'selected' : ''}>serif</option>
+                <option value="Noto Sans SC" ${state.readerSettings.fontFamily === 'Noto Sans SC' ? 'selected' : ''}>黑体</option>
+                <option value="serif" ${state.readerSettings.fontFamily === 'serif' ? 'selected' : ''}>宋体</option>
                 <option value="monospace" ${state.readerSettings.fontFamily === 'monospace' ? 'selected' : ''}>等宽</option>
               </select>
-              <label>图片</label>
+            </div>
+            <div class="reader-slider-row">
+              <span class="reader-slider-cap">图片</span>
               <input type="range" id="img-scale" min="50" max="200" step="10" value="${state.readerSettings.imgScale}" />
-              <span class="range-value" id="img-scale-value">${state.readerSettings.imgScale}%</span>
+              <span class="reader-slider-cap" id="img-scale-value">${state.readerSettings.imgScale}%</span>
             </div>
           </div>
-        </div>
-        <div class="reader-content ${state.readerSettings.theme}" id="reader-content">
-          <div id="reader-host" class="reader-text"></div>
+
+          <div class="reader-sheet-pane" id="pane-theme">
+            <div class="reader-sheet-label">颜色</div>
+            <div class="reader-swatches" id="theme-swatches">
+              <button data-theme="white" aria-label="白色" style="--sw-bg:#ffffff"></button>
+              <button data-theme="paper" aria-label="纸黄" style="--sw-bg:#f7f1e3"></button>
+              <button data-theme="green" aria-label="豆绿" style="--sw-bg:#cfe7d4"></button>
+              <button data-theme="dark" aria-label="夜间" style="--sw-bg:#1e2229"></button>
+            </div>
+          </div>
+
+          <div class="reader-sheet-pane" id="pane-toc">
+            <div class="reader-sheet-label">目录</div>
+            <div class="reader-toc" id="reader-toc"></div>
+          </div>
         </div>
       </div>
     `;
+
     const host = document.getElementById('reader-host');
     applyReaderStyles();
     bindReaderControls();
@@ -859,46 +943,184 @@ async function renderReader(container) {
     } else {
       host.innerHTML = `<div class="empty-state"><h3>暂不支持在线阅读的格式</h3><p>请下载后阅读</p></div>`;
     }
+
+    buildReaderToc(host);
   } catch (err) {
     container.innerHTML = `<div class="container" style="padding-top:64px"><div class="message error">加载失败：${escapeHtml(err.message)}</div></div>`;
   }
 }
 
+function toggleReaderSheet(which) {
+  const sheet = document.getElementById('reader-sheet');
+  if (!sheet) return;
+  const panes = { font: 'pane-font', theme: 'pane-theme', toc: 'pane-toc' };
+  const tabs = { font: 'tab-font', theme: 'tab-theme', toc: 'tab-toc' };
+  if (sheet.classList.contains('open') && sheet.getAttribute('data-pane') === which) {
+    closeReaderSheet();
+    return;
+  }
+  sheet.classList.add('open');
+  sheet.setAttribute('data-pane', which);
+  Object.keys(panes).forEach(key => {
+    const pane = document.getElementById(panes[key]);
+    const tab = document.getElementById(tabs[key]);
+    const on = key === which;
+    if (pane) pane.classList.toggle('active', on);
+    if (tab) tab.classList.toggle('active', on);
+  });
+}
+
+function closeReaderSheet() {
+  const sheet = document.getElementById('reader-sheet');
+  if (sheet) {
+    sheet.classList.remove('open');
+    sheet.removeAttribute('data-pane');
+  }
+  ['tab-font', 'tab-theme', 'tab-toc'].forEach(id => {
+    const tab = document.getElementById(id);
+    if (tab) tab.classList.remove('active');
+  });
+}
+
+function syncReaderSegments() {
+  const margin = document.getElementById('seg-margin');
+  if (margin) {
+    Array.prototype.forEach.call(margin.querySelectorAll('button'), btn => {
+      btn.classList.toggle('active', btn.dataset.value === state.readerSettings.margin);
+    });
+  }
+  const lineHeight = document.getElementById('seg-lineheight');
+  if (lineHeight) {
+    Array.prototype.forEach.call(lineHeight.querySelectorAll('button'), btn => {
+      btn.classList.toggle('active', parseFloat(btn.dataset.value) === state.readerSettings.lineHeight);
+    });
+  }
+}
+
+function syncReaderSwatches() {
+  const wrap = document.getElementById('theme-swatches');
+  if (!wrap) return;
+  Array.prototype.forEach.call(wrap.querySelectorAll('button'), btn => {
+    btn.classList.toggle('active', btn.dataset.theme === state.readerSettings.theme);
+  });
+}
+
 function bindReaderControls() {
   const fontSize = document.getElementById('font-size');
-  const lineHeight = document.getElementById('line-height');
-  const theme = document.getElementById('theme');
-  const fontFamily = document.getElementById('font-family');
   const imgScale = document.getElementById('img-scale');
   const imgScaleValue = document.getElementById('img-scale-value');
+  const fontFamily = document.getElementById('font-family');
 
-  const update = () => {
-    state.readerSettings.fontSize = parseInt(fontSize.value);
-    state.readerSettings.lineHeight = parseFloat(lineHeight.value);
-    state.readerSettings.theme = theme.value;
-    state.readerSettings.fontFamily = fontFamily.value;
-    state.readerSettings.imgScale = parseInt(imgScale.value);
-    if (imgScaleValue) imgScaleValue.textContent = imgScale.value + '%';
+  const persist = () => {
     localStorage.setItem('readerSettings', JSON.stringify(state.readerSettings));
     applyReaderStyles();
   };
 
-  fontSize.addEventListener('input', update);
-  lineHeight.addEventListener('input', update);
-  theme.addEventListener('change', update);
-  fontFamily.addEventListener('change', update);
-  imgScale.addEventListener('input', update);
+  if (fontSize) {
+    fontSize.addEventListener('input', () => {
+      state.readerSettings.fontSize = parseInt(fontSize.value, 10);
+      persist();
+    });
+  }
+
+  if (imgScale) {
+    imgScale.addEventListener('input', () => {
+      state.readerSettings.imgScale = parseInt(imgScale.value, 10);
+      if (imgScaleValue) imgScaleValue.textContent = imgScale.value + '%';
+      persist();
+    });
+  }
+
+  if (fontFamily) {
+    fontFamily.addEventListener('change', () => {
+      state.readerSettings.fontFamily = fontFamily.value;
+      persist();
+    });
+  }
+
+  const segMargin = document.getElementById('seg-margin');
+  if (segMargin) {
+    segMargin.addEventListener('click', event => {
+      const btn = event.target.closest('button');
+      if (!btn || !btn.dataset.value) return;
+      state.readerSettings.margin = btn.dataset.value;
+      syncReaderSegments();
+      persist();
+    });
+  }
+
+  const segLineHeight = document.getElementById('seg-lineheight');
+  if (segLineHeight) {
+    segLineHeight.addEventListener('click', event => {
+      const btn = event.target.closest('button');
+      if (!btn || !btn.dataset.value) return;
+      state.readerSettings.lineHeight = parseFloat(btn.dataset.value);
+      syncReaderSegments();
+      persist();
+    });
+  }
+
+  const swatches = document.getElementById('theme-swatches');
+  if (swatches) {
+    swatches.addEventListener('click', event => {
+      const btn = event.target.closest('button');
+      if (!btn || !btn.dataset.theme) return;
+      state.readerSettings.theme = btn.dataset.theme;
+      syncReaderSwatches();
+      persist();
+    });
+  }
+
+  const content = document.getElementById('reader-content');
+  if (content) content.addEventListener('click', closeReaderSheet);
+
+  syncReaderSegments();
+  syncReaderSwatches();
 }
 
 function applyReaderStyles() {
-  const content = document.getElementById('reader-content');
+  const page = document.getElementById('reader-page');
   const host = document.getElementById('reader-host');
-  content.className = `reader-content ${state.readerSettings.theme}`;
-  host.style.fontSize = state.readerSettings.fontSize + 'px';
-  host.style.lineHeight = state.readerSettings.lineHeight;
-  host.style.fontFamily = state.readerSettings.fontFamily;
+  if (!page || !host) return;
+  const settings = state.readerSettings;
+  page.setAttribute('data-theme', settings.theme);
+  page.setAttribute('data-margin', settings.margin || 'normal');
+  host.style.fontSize = settings.fontSize + 'px';
+  host.style.lineHeight = settings.lineHeight;
+  host.style.fontFamily = settings.fontFamily;
   // 图片缩放：以阅读区宽度为 100%
-  host.style.setProperty('--img-scale', (state.readerSettings.imgScale || 100) / 100);
+  host.style.setProperty('--img-scale', (settings.imgScale || 100) / 100);
+}
+
+// 依据渲染出的章节标题生成目录
+function buildReaderToc(host) {
+  const toc = document.getElementById('reader-toc');
+  const tab = document.getElementById('tab-toc');
+  if (!toc || !host) return;
+  const titles = host.querySelectorAll('.epub-chapter-title');
+  if (titles.length === 0) {
+    if (tab) {
+      tab.disabled = true;
+      tab.setAttribute('title', '本书没有章节信息');
+    }
+    toc.innerHTML = '<div class="reader-toc-empty">本书没有分章信息</div>';
+    return;
+  }
+  let html = '';
+  Array.prototype.forEach.call(titles, (el, index) => {
+    const chapter = el.closest('.epub-chapter');
+    const id = 'reader-ch-' + index;
+    if (chapter) chapter.id = id;
+    html += '<button class="reader-toc-item" data-target="' + id + '">' + escapeHtml(el.textContent) + '</button>';
+  });
+  toc.innerHTML = html;
+  toc.onclick = event => {
+    const btn = event.target.closest('.reader-toc-item');
+    if (!btn) return;
+    const target = document.getElementById(btn.dataset.target);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    closeReaderSheet();
+  };
 }
 
 // EPUB rendering (server-side extraction)
