@@ -18,8 +18,11 @@ server.log
 .DS_Store
 .vscode
 .idea
+backup
 
-# 文档与本地脚本
+# 文档与本地脚本（Dockerfile 只 COPY 运行所需文件，这里一并排除以缩小构建上下文）
 README.md
 TYPOGRAPHY.md
 serve.sh
+docker-start.sh
+docker-compose.yml

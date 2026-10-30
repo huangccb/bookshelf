@@ -67,6 +67,33 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
+### 手动构建镜像
+
+不用脚本时，直接构建并运行：
+
+```bash
+docker build -t bookshelf:latest .
+docker run -d --name bookshelf \
+  -p 3000:3000 \
+  -v bookshelf-data:/app/data \
+  -e ADMIN_EMAIL=admin@admin.com \
+  -e ADMIN_PASSWORD=admin123 \
+  -e JWT_SECRET=请换成随机长字符串 \
+  -e TZ=Asia/Shanghai \
+  bookshelf:latest
+```
+
+镜像要点：
+
+- 基础镜像 `node:22-alpine`，依赖层基于 `package.json` + `package-lock.json` 单独缓存
+- 以非 root 用户 `node` 运行，容器内监听 `3000`
+- **全部运行期数据只在 `/app/data` 一个目录**：数据库 `data.json`、`uploads/`、`covers/`
+- 内置 `HEALTHCHECK`，探测 `GET /api/health`，可用 `docker inspect --format '{{.State.Health.Status}}' bookshelf` 查看
+- 仓库里的 `data.json`、`uploads/`、`covers/` 被 `.dockerignore` 排除，**不会打进镜像**
+
+> 首次启动时会在数据目录里新建一个空库并创建管理员账户；若要延续本地已有的书，
+> 在启动前把本地的 `data.json`、`uploads/`、`covers/` 拷进数据卷，或在容器启动后逐本重新上传。
+
 ### 服务管理（本机运行）
 
 ```bash
@@ -151,6 +178,9 @@ docker-start.sh      Docker 部署与备份脚本
 .dockerignore        镜像构建排除项
 serve.sh             本机服务管理脚本
 ```
+
+> 目录里的 `data.json`、`uploads/`、`covers/` 是本机开发时的运行期数据，
+> 已被 `.gitignore` 与 `.dockerignore` 排除：既不进仓库，也不进镜像。Docker 部署下它们位于数据卷的 `/app/data`。
 
 运行期数据目录可用 `DATA_DIR` 指定（Docker 下为 `/app/data`），
 `UPLOADS_DIR`、`COVERS_DIR`、`DB_PATH` 可单独覆盖。
