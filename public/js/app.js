@@ -10,7 +10,11 @@ const state = {
   viewMode: localStorage.getItem('viewMode') || 'grid',
   metaResults: [],
   pendingCoverUrl: '',
-  readerSettings: loadReaderSettings()
+  readerSettings: loadReaderSettings(),
+  history: [],
+  historyTotal: 0,
+  myBooks: [],
+  myBooksTotal: 0
 };
 
 // 读取阅读偏好，并迁移旧版主题名与行距数值
@@ -66,15 +70,35 @@ async function api(path, options = {}) {
   return data;
 }
 
+// 站内页面：登录与注册各自是独立页面（/login、/register），
+// 主目录 / 即书籍页面，其余页面用 hash 路由
+const PAGE_ROUTES = {
+  '/login': '/login',
+  '/register': '/register'
+};
+
 function navigate(path) {
-  window.location.hash = path;
+  if (PAGE_ROUTES[path]) {
+    window.location.href = PAGE_ROUTES[path];
+    return;
+  }
+  // 书架就是主目录，地址保持干净
+  window.location.hash = path === '/bookshelf' ? '' : path;
   render();
 }
 
+function leaveApp() {
+  state.token = null;
+  state.user = null;
+  localStorage.removeItem('token');
+}
+
 function getRoute() {
-  const hash = window.location.hash.replace('#', '') || '/login';
-  const [path, query] = hash.split('?');
-  return { path, query };
+  const raw = window.location.hash.replace('#', '');
+  // 空 hash 或站内旧链接（#/bookshelf）都落到书籍页面
+  const path = (!raw || raw === '/bookshelf') ? '/' : raw;
+  const [clean, query] = path.split('?');
+  return { path: clean, query };
 }
 
 function currentId() {
@@ -87,21 +111,26 @@ function render() {
   const { path } = getRoute();
   app.innerHTML = '';
 
-  if (!state.token && path !== '/register') {
-    renderLogin(app);
+  // 独立页面只在自己的网址上渲染，直接用 hash 访问就送回对应页面
+  if (path === '/login' || path === '/register') {
+    window.location.replace(PAGE_ROUTES[path]);
+    return;
+  }
+
+  // 主目录与书籍相关页面需要登录，未登录转到登录页
+  if (!state.token) {
+    leaveApp();
+    window.location.replace('/login');
     return;
   }
 
   switch (path) {
-    case '/login':
-      renderLogin(app);
-      break;
-    case '/register':
-      renderRegister(app);
-      break;
-    case '/bookshelf':
+    case '/':
       renderBookshelf(app);
       break;
+    case '/bookshelf':
+      navigate('/');
+      return;
     case '/upload':
       renderUpload(app);
       break;
@@ -113,6 +142,9 @@ function render() {
       break;
     case '/edit':
       renderBookEdit(app);
+      break;
+    case '/account':
+      renderAccount(app);
       break;
     default:
       if (path.startsWith('/reader/')) {
@@ -127,94 +159,6 @@ function render() {
   }
 }
 
-// Login page
-function renderLogin(container) {
-  container.innerHTML = `
-    <div class="auth-page">
-      <div class="auth-box">
-        <div class="auth-logo">
-          <h1>资源书架</h1>
-          <p>登录你的账户</p>
-        </div>
-        <div class="panel" id="login-panel">
-          <div class="panel-title">用户登录</div>
-          <div id="login-msg"></div>
-          <form id="login-form">
-            <div class="form-group">
-              <label>邮箱</label>
-              <input type="email" id="email" required placeholder="operator@rhodes.island" />
-            </div>
-            <div class="form-group">
-              <label>密码</label>
-              <input type="password" id="password" required placeholder='输入密码' />
-            </div>
-            <button type="submit" class="btn btn-primary" style="width:100%">登录</button>
-          </form>
-          <p style="text-align:center;margin-top:16px;color:var(--text-secondary);font-size:0.9rem">
-            还没有账号？<a href="#/register">注册</a>
-          </p>
-        </div>
-      </div>
-    </div>
-  `;
-  document.getElementById('login-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-    try {
-      const data = await api('/api/auth/login', { method: 'POST', body: { email, password } });
-      setAuth(data);
-      navigate('/bookshelf');
-    } catch (err) {
-      showMsg('login-msg', err.message, true);
-    }
-  });
-}
-
-// Register page
-function renderRegister(container) {
-  container.innerHTML = `
-    <div class="auth-page">
-      <div class="auth-box">
-        <div class="auth-logo">
-          <h1>注册账户</h1>
-          <p>创建新账户以开始使用</p>
-        </div>
-        <div class="panel" id="register-panel">
-          <div class="panel-title">填写信息</div>
-          <div id="register-msg"></div>
-          <form id="register-form">
-            <div class="form-group">
-              <label>邮箱</label>
-              <input type="email" id="reg-email" required placeholder="operator@rhodes.island" />
-            </div>
-            <div class="form-group">
-              <label>密码</label>
-              <input type="password" id="reg-password" required placeholder='至少 6 位' />
-            </div>
-            <button type="submit" class="btn btn-primary" style="width:100%">注册</button>
-          </form>
-          <p style="text-align:center;margin-top:16px;color:var(--text-secondary);font-size:0.9rem">
-            已有账号？<a href="#/login">登录</a>
-          </p>
-        </div>
-      </div>
-    </div>
-  `;
-  document.getElementById('register-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const email = document.getElementById('reg-email').value;
-    const password = document.getElementById('reg-password').value;
-    try {
-      const data = await api('/api/auth/register', { method: 'POST', body: { email, password } });
-      setAuth(data);
-      navigate('/bookshelf');
-    } catch (err) {
-      showMsg('register-msg', err.message, true);
-    }
-  });
-}
-
 function setAuth(data) {
   state.token = data.token;
   state.user = data.user;
@@ -222,10 +166,8 @@ function setAuth(data) {
 }
 
 function logout() {
-  state.token = null;
-  state.user = null;
-  localStorage.removeItem('token');
-  navigate('/login');
+  leaveApp();
+  window.location.href = '/login';
 }
 
 function showMsg(id, text, isError) {
@@ -253,25 +195,45 @@ function safeFilename(book) {
   return `${book.title}.${book.format}`.replace(/[^\u4e00-\u9fa5a-zA-Z0-9_\-.]/g, '_');
 }
 
+// 顶栏不提供后台入口：后台只通过 /admin 网址进入
 function topBar() {
-  const roleBadge = state.user && state.user.role === 'admin'
-    ? '<span class="user-role">Admin</span>'
-    : '';
-  const userInfo = state.user
-    ? `<span class="user-info">${escapeHtml(state.user.email)}${roleBadge}</span>`
-    : '';
   return `
     <div class="top-bar">
-      <div class="logo" onclick="navigate('/bookshelf')">
+      <a class="logo" href="/">
         <span class="logo-text">资源书架</span>
-      </div>
+      </a>
       <div class="nav-links">
-        ${userInfo}
-        <a class="btn" href="#/bookshelf">书架</a>
+        ${userChip()}
+        <a class="btn" href="/">书架</a>
         <a class="btn" href="#/upload">上传书籍</a>
         <button class="btn btn-danger" onclick="logout()">退出</button>
       </div>
     </div>
+  `;
+}
+
+// 用户名：账户没设过名字时退回邮箱前缀，保证按钮上总有字
+function displayName(user) {
+  const u = user || state.user;
+  if (!u) return '读者';
+  const name = String(u.name || '').trim();
+  if (name) return name;
+  return String(u.email || '').split('@')[0] || '读者';
+}
+
+// viewBox 描边的云朵，用作用户按钮与卡片装饰的图形母题
+const CLOUD_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.2 18h9.4a3.4 3.4 0 0 0 .5-6.76A4.6 4.6 0 0 0 8.6 10a3.6 3.6 0 0 0-1.4 8z"/></svg>`;
+
+// 右上角的用户按钮：显示用户名，点击进入账户中心
+function userChip() {
+  const name = displayName();
+  const initial = Array.from(name)[0] || '读';
+  return `
+    <a class="user-chip" href="#/account" title="${escapeAttr(name)}">
+      ${CLOUD_ICON}
+      <span class="user-chip-name">${escapeHtml(name)}</span>
+      <span class="user-chip-initial" aria-hidden="true">${escapeHtml(initial)}</span>
+    </a>
   `;
 }
 
@@ -475,7 +437,7 @@ async function renderBookDetail(container) {
     container.innerHTML = topBar() + `
       <div class="container">
         <div class="detail-topbar">
-          <button class="btn" onclick="navigate('/bookshelf')">← 返回书架</button>
+          <button class="btn" onclick="navigate('/')">← 返回书架</button>
         </div>
 
         <div class="book-detail">
@@ -826,7 +788,340 @@ function renderUpload(container) {
   });
 }
 
+// ---------- 账户中心 ----------
+
+// 相对时间：历史记录角标用
+function relativeTime(iso) {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '';
+  const diff = Date.now() - t;
+  if (diff < 0) return '刚刚';
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return '刚刚';
+  if (min < 60) return min + ' 分钟前';
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return hour + ' 小时前';
+  const day = Math.floor(hour / 24);
+  if (day < 30) return day + ' 天前';
+  const d = new Date(t);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// 网格里的一张书卡：封面 + 书名 + 作者 + 可选角标
+function cloudBookCard(book, opts) {
+  const o = opts || {};
+  const badge = o.badge ? `<span class="collection-badge">${escapeHtml(o.badge)}</span>` : '';
+  return `
+    <li class="cloud-book-card" data-book-id="${escapeAttr(book.id)}" data-href="${escapeAttr(o.href || '#/book/' + book.id)}">
+      <div class="cloud-book-cover">
+        ${coverBlock(book)}
+        ${badge}
+      </div>
+      <div class="cloud-book-title">${escapeHtml(book.title)}</div>
+      <div class="cloud-book-author">${escapeHtml(book.author || '未知作者')}</div>
+    </li>
+  `;
+}
+
+// 一级只展示 5 本，超出时给「查看全部」
+const FEATURED_LIMIT = 5;
+
+function collectionSection(opts) {
+  const items = opts.items || [];
+  const total = opts.total || 0;
+  const shown = items.slice(0, FEATURED_LIMIT);
+  const hasMore = total > FEATURED_LIMIT;
+  const empty = total === 0;
+
+  return `
+    <section class="cloud-card collection-panel">
+      <span class="cloud-deco" aria-hidden="true"></span>
+      <header class="collection-head">
+        <h2 class="collection-title">${CLOUD_ICON}<span>${escapeHtml(opts.title)}</span></h2>
+        <div class="collection-head-right">
+          <span class="collection-count">共 ${total} 本</span>
+          ${hasMore ? `<button class="btn btn-sm collection-more" data-open-collection="${escapeAttr(opts.kind)}">查看全部</button>` : ''}
+        </div>
+      </header>
+      ${empty
+        ? `<div class="collection-empty">${escapeHtml(opts.emptyText || '还没有内容。')}</div>`
+        : `<ul class="collection-grid">${shown.map(item => cloudBookCard(item.book, {
+            href: opts.hrefFor(item.book),
+            badge: opts.badgeFor ? opts.badgeFor(item) : ''
+          })).join('')}</ul>`}
+    </section>
+  `;
+}
+
+async function renderAccount(container) {
+  container.innerHTML = topBar() + '<div class="container" id="account-container"><div class="loading"></div></div>';
+  try {
+    const [me, history, mine] = await Promise.all([
+      api('/api/auth/me', { method: 'GET' }),
+      api('/api/history?limit=200', { method: 'GET' }),
+      api('/api/my-books?limit=200', { method: 'GET' })
+    ]);
+    state.user = me.user;
+    state.history = history.items || [];
+    state.historyTotal = history.total || 0;
+    state.myBooks = mine.items || [];
+    state.myBooksTotal = mine.total || 0;
+    paintAccount(container);
+  } catch (err) {
+    container.innerHTML = topBar() + `<div class="container"><div class="message error">加载失败：${escapeHtml(err.message)}</div></div>`;
+    if (err.message.includes('未登录') || err.message.includes('过期')) logout();
+  }
+}
+
+function paintAccount(container) {
+  const user = state.user || {};
+  const roleLabel = user.role === 'admin' ? '管理员' : '普通用户';
+
+  const historySection = collectionSection({
+    title: '历史阅读',
+    kind: 'history',
+    total: state.historyTotal,
+    items: state.history,
+    emptyText: '还没有阅读记录，打开一本书就会出现在这里。',
+    // 历史卡片直接续读
+    hrefFor: book => '#/reader/' + book.id,
+    badgeFor: item => relativeTime(item.last_read_at)
+  });
+
+  const mineSection = collectionSection({
+    title: '我的上传',
+    kind: 'my-books',
+    total: state.myBooksTotal,
+    items: state.myBooks,
+    emptyText: '你还没有上传过书籍。',
+    hrefFor: book => '#/book/' + book.id,
+    badgeFor: () => '我上传'
+  });
+
+  container.innerHTML = topBar() + `
+    <div class="container account-page">
+      <div class="account-topbar">
+        <a class="btn" href="/">← 返回书架</a>
+      </div>
+
+      <section class="cloud-card account-card">
+        <span class="cloud-deco" aria-hidden="true"></span>
+        <header class="account-head">
+          <span class="account-avatar" aria-hidden="true">${CLOUD_ICON}</span>
+          <div class="account-head-text">
+            <h1 class="account-title">${escapeHtml(displayName(user))}</h1>
+            <p class="account-sub">
+              <span class="user-role">${roleLabel}</span>
+              ${escapeHtml(user.email || '')}
+            </p>
+          </div>
+        </header>
+
+        <div id="account-msg"></div>
+
+        <form id="account-form" class="account-form" novalidate>
+          <fieldset class="account-fieldset">
+            <legend>资料</legend>
+            <div class="form-group">
+              <label for="account-name">用户名</label>
+              <input type="text" id="account-name" maxlength="32" value="${escapeAttr(displayName(user))}" placeholder="用户名" />
+              <div class="upload-hint">顶栏显示的名字，1 到 32 个字符</div>
+            </div>
+            <div class="form-group">
+              <label for="account-email">邮箱</label>
+              <input type="email" id="account-email" value="${escapeAttr(user.email || '')}" placeholder="邮箱地址" autocapitalize="none" spellcheck="false" />
+              <div class="upload-hint">用于登录，修改后请用新邮箱登录</div>
+            </div>
+          </fieldset>
+
+          <fieldset class="account-fieldset">
+            <legend>修改密码</legend>
+            <div class="form-group">
+              <label for="account-current">当前密码</label>
+              <input type="password" id="account-current" autocomplete="current-password" placeholder="输入当前密码后保存" />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="account-new">新密码</label>
+                <input type="password" id="account-new" autocomplete="new-password" placeholder="不修改请留空" />
+              </div>
+              <div class="form-group">
+                <label for="account-confirm">确认新密码</label>
+                <input type="password" id="account-confirm" autocomplete="new-password" placeholder="再输入一次新密码" />
+              </div>
+            </div>
+            <div class="account-match" id="account-match" hidden>两次输入的密码不一致</div>
+          </fieldset>
+
+          <div class="account-actions">
+            <button type="submit" class="btn btn-primary" id="account-save">保存修改</button>
+            <button type="button" class="btn btn-danger" onclick="logout()">退出登录</button>
+          </div>
+        </form>
+      </section>
+
+      ${historySection}
+      ${mineSection}
+    </div>
+  `;
+
+  bindAccountForm();
+  bindCollectionCards();
+}
+
+function bindAccountForm() {
+  const form = document.getElementById('account-form');
+  if (!form) return;
+  const pwd = document.getElementById('account-new');
+  const confirm = document.getElementById('account-confirm');
+  const matchTip = document.getElementById('account-match');
+  const saveBtn = document.getElementById('account-save');
+
+  // 两个密码框实时比对，不一致就禁用保存
+  const syncMatch = () => {
+    const a = pwd.value;
+    const b = confirm.value;
+    const mismatch = !!a && !!b && a !== b;
+    matchTip.hidden = !mismatch;
+    saveBtn.disabled = mismatch;
+  };
+  pwd.addEventListener('input', syncMatch);
+  confirm.addEventListener('input', syncMatch);
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const name = document.getElementById('account-name').value.trim();
+    const email = document.getElementById('account-email').value.trim();
+    const current = document.getElementById('account-current').value;
+    const next = pwd.value;
+    const nextConfirm = confirm.value;
+
+    if (!name) return showMsg('account-msg', '用户名不能为空', true);
+    if (!current) return showMsg('account-msg', '请输入当前密码后再保存', true);
+    if (next && next !== nextConfirm) return showMsg('account-msg', '两次输入的密码不一致', true);
+
+    const payload = { name, email, current_password: current };
+    if (next) {
+      payload.new_password = next;
+      payload.confirm_password = nextConfirm;
+    }
+
+    saveBtn.disabled = true;
+    try {
+      const data = await api('/api/account', { method: 'PUT', body: payload });
+      state.user = data.user;
+      if (data.token) {
+        state.token = data.token;
+        localStorage.setItem('token', data.token);
+      }
+      // 清掉刚填的密码框
+      document.getElementById('account-current').value = '';
+      pwd.value = '';
+      confirm.value = '';
+      syncMatch();
+      showMsg('account-msg', '已保存', false);
+      paintAccount(document.getElementById('app'));
+    } catch (err) {
+      showMsg('account-msg', err.message, true);
+      saveBtn.disabled = false;
+    }
+  });
+}
+
+// 卡片点击跳转；弹窗里的卡片先关弹窗再跳
+function bindCollectionCards() {
+  document.querySelectorAll('.cloud-book-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const href = card.dataset.href;
+      closeCollectionModal();
+      if (href) navigate(href.replace(/^#/, ''));
+    });
+  });
+}
+
+// ---------- 全部书籍弹窗 ----------
+
+function collectionSource(kind) {
+  if (kind === 'history') {
+    return {
+      title: '历史阅读',
+      items: state.history || [],
+      hrefFor: book => '#/reader/' + book.id,
+      badgeFor: item => relativeTime(item.last_read_at),
+      emptyText: '还没有阅读记录。'
+    };
+  }
+  return {
+    title: '我的上传',
+    items: state.myBooks || [],
+    hrefFor: book => '#/book/' + book.id,
+    badgeFor: () => '我上传',
+    emptyText: '你还没有上传过书籍。'
+  };
+}
+
+function openCollectionModal(kind) {
+  const source = collectionSource(kind);
+  const items = source.items;
+
+  let host = document.getElementById('collection-modal-host');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'collection-modal-host';
+    document.body.appendChild(host);
+  }
+
+  host.innerHTML = `
+    <div class="collection-mask" data-collection-mask>
+      <div class="collection-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(source.title)}">
+        <header class="collection-modal-head">
+          <h2>${CLOUD_ICON}<span>${escapeHtml(source.title)} · 全部 ${items.length} 本</span></h2>
+          <button class="collection-close" data-collection-close aria-label="关闭">×</button>
+        </header>
+        <div class="collection-modal-body">
+          ${items.length === 0
+            ? `<div class="collection-empty">${escapeHtml(source.emptyText)}</div>`
+            : `<ul class="collection-grid">${items.map(item => cloudBookCard(item.book, {
+                href: source.hrefFor(item.book),
+                badge: source.badgeFor(item)
+              })).join('')}</ul>`}
+        </div>
+        <footer class="collection-modal-foot">
+          <button class="btn" data-collection-close>关闭</button>
+        </footer>
+      </div>
+    </div>
+  `;
+
+  host.querySelector('[data-collection-mask]').addEventListener('click', e => {
+    if (e.target.hasAttribute('data-collection-mask')) closeCollectionModal();
+  });
+  host.querySelectorAll('[data-collection-close]').forEach(btn => {
+    btn.addEventListener('click', closeCollectionModal);
+  });
+  bindCollectionCards();
+  document.body.classList.add('modal-open');
+}
+
+function closeCollectionModal() {
+  const host = document.getElementById('collection-modal-host');
+  if (host) host.innerHTML = '';
+  document.body.classList.remove('modal-open');
+}
+
 // ---------- 阅读器 ----------
+
+// 记录一次阅读：历史列表按最近阅读时间排序
+async function recordReading(bookId) {
+  try {
+    await api(`/api/books/${bookId}/progress`, { method: 'POST', body: {} });
+  } catch (e) {
+    // 历史记录失败不影响阅读
+  }
+}
+
 
 async function renderReader(container) {
   const bookId = currentId();
@@ -834,6 +1129,8 @@ async function renderReader(container) {
   try {
     const book = await api(`/api/books/${bookId}`, { method: 'GET' });
     state.currentBook = book;
+    // 打开阅读器即记一次历史，失败不影响阅读
+    recordReading(bookId);
     const fileUrl = `${API_BASE}/api/books/${bookId}/file`;
     container.innerHTML = `
       <div class="reader-page" id="reader-page"
@@ -1212,6 +1509,19 @@ async function restoreSession() {
 }
 
 // Init
+// 账户页的「查看全部」由事件委托处理，重绘后无需重新绑定
+document.addEventListener('click', event => {
+  const trigger = event.target.closest('[data-open-collection]');
+  if (!trigger) return;
+  event.preventDefault();
+  openCollectionModal(trigger.dataset.openCollection);
+});
+
+// Esc 关闭弹窗
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeCollectionModal();
+});
+
 window.addEventListener('hashchange', render);
 window.addEventListener('load', async () => {
   await restoreSession();

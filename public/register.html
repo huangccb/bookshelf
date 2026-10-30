@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>注册 · 资源书架</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="auth-page">
+    <div class="auth-box">
+      <div class="auth-logo">
+        <h1>注册账户</h1>
+        <p>创建新账户以开始使用</p>
+      </div>
+      <div class="panel">
+        <div class="panel-title">填写信息</div>
+        <div id="register-msg"></div>
+        <form id="register-form" novalidate>
+          <div class="form-group">
+            <label for="reg-email">邮箱</label>
+            <input type="email" id="reg-email" name="email" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="邮箱地址" />
+          </div>
+          <div class="form-group">
+            <label for="reg-name">用户名</label>
+            <input type="text" id="reg-name" name="name" maxlength="32" autocomplete="nickname" placeholder="用户名（选填，默认用邮箱前缀）" />
+            <div class="upload-hint">顶栏显示的名字，可稍后在账户中心修改</div>
+          </div>
+          <div class="form-group">
+            <label for="reg-password">密码</label>
+            <input type="password" id="reg-password" name="password" autocomplete="new-password" required placeholder="至少 6 位" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-block" id="register-submit">注册</button>
+        </form>
+        <p class="auth-switch">
+          已有账号？<a href="/login.html">登录</a>
+        </p>
+      </div>
+    </div>
+  </div>
+  <script>
+    const TOKEN_KEY = 'token';
+    const form = document.getElementById('register-form');
+    const submitBtn = document.getElementById('register-submit');
+
+    function showError(text) {
+      document.getElementById('register-msg').innerHTML =
+        '<div class="message error">' + text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const email = document.getElementById('reg-email').value.trim();
+      const password = document.getElementById('reg-password').value;
+      const name = document.getElementById('reg-name').value.trim();
+      if (!email) {
+        showError('请输入邮箱地址');
+        return;
+      }
+      if (!password || password.length < 6) {
+        showError('密码至少 6 位');
+        return;
+      }
+      submitBtn.disabled = true;
+      submitBtn.textContent = '注册中…';
+      try {
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, name })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '注册失败');
+        localStorage.setItem(TOKEN_KEY, data.token);
+        window.location.replace('/');
+      } catch (err) {
+        showError(err.message || '注册失败');
+        submitBtn.disabled = false;
+        submitBtn.textContent = '注册';
+      }
+    });
+  </script>
+</body>
+</html>

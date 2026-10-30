@@ -94,6 +94,11 @@ a:hover {
   font-size: clamp(1.02rem, 3.2vw, 1.25rem);
   font-weight: 700;
   color: var(--text-primary);
+  text-decoration: none;
+}
+
+.logo:hover {
+  text-decoration: none;
 }
 
 .logo-text {
@@ -270,6 +275,34 @@ input[type="file"] {
   color: var(--text-secondary);
   margin-top: 8px;
   font-size: 0.95rem;
+}
+
+/* 独立的登录、注册页面 */
+.auth-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: max(16px, env(safe-area-inset-top)) clamp(16px, 5vw, 24px) max(16px, env(safe-area-inset-bottom));
+}
+
+.auth-box .panel {
+  margin-bottom: 0;
+}
+
+.btn-block {
+  display: flex;
+  width: 100%;
+}
+
+.auth-switch {
+  text-align: center;
+  margin: 16px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.auth-page input {
+  /* 16px 以上，避免 iOS 聚焦时自动放大页面 */
+  font-size: max(16px, 1rem);
 }
 
 /* Messages */
@@ -1373,6 +1406,15 @@ input[type="file"] {
     padding: 14px;
   }
 
+  .auth-page {
+    align-items: flex-start;
+    padding-top: max(28px, env(safe-area-inset-top));
+  }
+
+  .auth-logo {
+    margin-bottom: 20px;
+  }
+
   .book-grid {
     grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
     gap: 8px;
@@ -1394,5 +1436,541 @@ input[type="file"] {
 
   .reader-book-title {
     font-size: 0.86rem;
+  }
+}
+
+/* ---------- Cloud Design ---------- */
+/* 云形装饰与用户按钮：配色从现有色板派生，不改变既有变量 */
+
+:root {
+  --cloud-surface: rgba(255, 255, 255, 0.82);
+  --cloud-border: rgba(37, 99, 235, 0.12);
+  --cloud-glow: 0 8px 24px -12px rgba(37, 99, 235, 0.25);
+}
+
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px 7px 11px;
+  border: 1px solid var(--cloud-border);
+  border-radius: 999px;
+  background: var(--cloud-surface);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.5;
+  text-decoration: none;
+  max-width: 220px;
+  transition: border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.user-chip:hover {
+  text-decoration: none;
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: var(--cloud-glow);
+}
+
+.user-chip svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.user-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 窄屏时只留图标与首字 */
+.user-chip-initial {
+  display: none;
+}
+
+.cloud-card {
+  position: relative;
+  overflow: hidden;
+  background: var(--cloud-surface);
+  border: 1px solid var(--cloud-border);
+  border-radius: 16px;
+  box-shadow: var(--cloud-glow);
+  padding: clamp(16px, 3.5vw, 24px);
+  margin-bottom: clamp(14px, 3vw, 20px);
+}
+
+@supports (backdrop-filter: blur(6px)) {
+  .cloud-card {
+    backdrop-filter: blur(6px);
+  }
+}
+
+/* 云朵轮廓：两个错开的椭圆叠成云形 */
+.cloud-deco {
+  position: absolute;
+  top: -18px;
+  right: -26px;
+  width: 190px;
+  height: 110px;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.cloud-deco::before,
+.cloud-deco::after {
+  content: "";
+  position: absolute;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.cloud-deco::before {
+  width: 120px;
+  height: 54px;
+  top: 30px;
+  right: 10px;
+  opacity: 0.07;
+}
+
+.cloud-deco::after {
+  width: 72px;
+  height: 72px;
+  top: 2px;
+  right: 56px;
+  opacity: 0.06;
+}
+
+.account-page {
+  padding-bottom: 48px;
+}
+
+.account-topbar {
+  margin-bottom: 16px;
+}
+
+.account-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.account-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.account-avatar svg {
+  width: 24px;
+  height: 24px;
+}
+
+.account-head-text {
+  min-width: 0;
+}
+
+.account-title {
+  margin: 0;
+  font-size: clamp(1.15rem, 3.6vw, 1.4rem);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.account-sub {
+  margin: 3px 0 0;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.account-sub .user-role {
+  margin-left: 0;
+  margin-right: 6px;
+}
+
+.account-fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px 4px;
+  margin: 0 0 18px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.account-fieldset legend {
+  padding: 0 8px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.account-match {
+  margin: -8px 0 14px;
+  font-size: 0.84rem;
+  color: var(--danger);
+}
+
+.account-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.account-actions .btn {
+  flex: 1 1 auto;
+}
+
+/* 网格集合卡片 */
+.collection-panel {
+  padding-bottom: clamp(12px, 3vw, 16px);
+}
+
+.collection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.collection-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.collection-title svg {
+  color: var(--accent);
+  width: 20px;
+  height: 20px;
+}
+
+.collection-head-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.collection-count {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.collection-more {
+  white-space: nowrap;
+}
+
+.collection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 14px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cloud-book-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.cloud-book-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  box-shadow: 0 8px 18px -10px rgba(37, 99, 235, 0.35);
+}
+
+.cloud-book-cover {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  margin-bottom: 8px;
+}
+
+.cloud-book-cover .book-cover-img,
+.cloud-book-cover .book-cover-fallback {
+  width: 100%;
+  height: 100%;
+}
+
+.cloud-book-cover .book-cover-fallback {
+  font-size: 0.72rem;
+  padding: 6px;
+}
+
+.collection-badge {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  max-width: calc(100% - 12px);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #ffffff;
+  font-size: 0.68rem;
+  line-height: 1.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cloud-book-title {
+  font-size: 0.86rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cloud-book-author {
+  margin-top: 2px;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.collection-empty {
+  padding: 28px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  text-align: center;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+/* 全部书籍弹窗 */
+body.modal-open {
+  overflow: hidden;
+}
+
+.collection-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 320;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.collection-modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 960px;
+  max-height: calc(100vh - 32px);
+  background: var(--bg-secondary);
+  border: 1px solid var(--cloud-border);
+  border-radius: 16px;
+  box-shadow: 0 24px 48px -20px rgba(15, 23, 42, 0.4);
+  overflow: hidden;
+}
+
+.collection-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--cloud-surface);
+}
+
+.collection-modal-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.collection-modal-head h2 svg {
+  color: var(--accent);
+  width: 20px;
+  height: 20px;
+}
+
+.collection-close {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.3rem;
+  line-height: 1.5;
+  padding: 2px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.collection-close:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.collection-modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 18px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.collection-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-tertiary);
+}
+
+/* 移动端 */
+@media (max-width: 768px) {
+  .user-chip {
+    padding: 7px 12px 7px 10px;
+    max-width: none;
+  }
+
+  .user-chip-name {
+    display: none;
+  }
+
+  .user-chip-initial {
+    display: inline;
+  }
+
+  .account-head {
+    gap: 12px;
+  }
+
+  .account-avatar {
+    width: 42px;
+    height: 42px;
+  }
+
+  .account-avatar svg {
+    width: 21px;
+    height: 21px;
+  }
+
+  .account-fieldset {
+    padding: 12px 12px 2px;
+  }
+
+  .account-fieldset input {
+    font-size: 16px;
+  }
+
+  .collection-grid {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 10px;
+  }
+
+  .cloud-book-card {
+    padding: 6px;
+  }
+
+  .cloud-book-title {
+    font-size: 0.8rem;
+  }
+
+  .cloud-book-author {
+    font-size: 0.7rem;
+  }
+
+  .collection-mask {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .collection-modal {
+    max-width: none;
+    max-height: 100vh;
+    height: 100vh;
+    border-radius: 0;
+    border: none;
+  }
+
+  .collection-modal-head {
+    padding: 12px 14px;
+    padding-top: max(12px, env(safe-area-inset-top));
+  }
+
+  .collection-modal-body {
+    padding: 14px 12px;
+  }
+
+  .collection-modal-foot {
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .collection-modal-foot .btn {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .collection-close {
+    padding: 4px 12px;
+    font-size: 1.5rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .cloud-deco {
+    display: none;
+  }
+
+  .cloud-card {
+    border-radius: 14px;
+    padding: 14px;
+  }
+
+  .account-actions .btn {
+    flex: 1 1 100%;
+    min-height: 42px;
+  }
+
+  .collection-grid {
+    grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+    gap: 8px;
+  }
+
+  .collection-head {
+    gap: 8px;
+  }
+
+  .collection-head-right {
+    width: 100%;
+    justify-content: space-between;
   }
 }

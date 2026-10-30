@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>登录 · 资源书架</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="auth-page">
+    <div class="auth-box">
+      <div class="auth-logo">
+        <h1>资源书架</h1>
+        <p>登录你的账户</p>
+      </div>
+      <div class="panel">
+        <div class="panel-title">用户登录</div>
+        <div id="login-msg"></div>
+        <form id="login-form" novalidate>
+          <div class="form-group">
+            <label for="login-email">邮箱</label>
+            <input type="email" id="login-email" name="email" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="邮箱地址" />
+          </div>
+          <div class="form-group">
+            <label for="login-password">密码</label>
+            <input type="password" id="login-password" name="password" autocomplete="current-password" required placeholder="输入密码" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-block" id="login-submit">登录</button>
+        </form>
+        <p class="auth-switch">
+          还没有账号？<a href="/register.html">注册</a>
+        </p>
+      </div>
+    </div>
+  </div>
+  <script>
+    const TOKEN_KEY = 'token';
+    const form = document.getElementById('login-form');
+    const submitBtn = document.getElementById('login-submit');
+
+    function showError(text) {
+      document.getElementById('login-msg').innerHTML =
+        '<div class="message error">' + text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const email = document.getElementById('login-email').value.trim();
+      const password = document.getElementById('login-password').value;
+      if (!email) {
+        showError('请输入邮箱地址');
+        document.getElementById('login-email').focus();
+        return;
+      }
+      if (!password) {
+        showError('请输入密码');
+        document.getElementById('login-password').focus();
+        return;
+      }
+      submitBtn.disabled = true;
+      submitBtn.textContent = '登录中…';
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '登录失败');
+        localStorage.setItem(TOKEN_KEY, data.token);
+        // 登录后回到书籍页面（主目录）
+        window.location.replace('/');
+      } catch (err) {
+        showError(err.message || '登录失败');
+        submitBtn.disabled = false;
+        submitBtn.textContent = '登录';
+      }
+    });
+
+    // 已登录时直接进入书架
+    if (localStorage.getItem(TOKEN_KEY)) {
+      fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + localStorage.getItem(TOKEN_KEY) } })
+        .then(res => { if (res.ok) window.location.replace('/'); else localStorage.removeItem(TOKEN_KEY); })
+        .catch(() => {});
+    }
+  </script>
+</body>
+</html>
