@@ -1,0 +1,25 @@
+# 依赖与构建产物
+node_modules
+npm-debug.log*
+
+# 运行期数据，挂载数据卷提供，不打进镜像
+data.json
+uploads
+covers
+data
+public/uploads
+
+# 本地环境与日志
+server.log
+*.log
+.env
+.git
+.gitignore
+.DS_Store
+.vscode
+.idea
+
+# 文档与本地脚本
+README.md
+TYPOGRAPHY.md
+serve.sh
