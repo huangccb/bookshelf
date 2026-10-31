@@ -1,4 +1,4 @@
-name: Docker Image
+name: Docker Image & Release
 
 # 推送 master 或打 v* 标签时构建镜像并推送到 GitHub Container Registry；
 # PR 只做构建验证，不推送。也可以在 Actions 页面手动触发。
@@ -92,3 +92,54 @@ jobs:
             echo
             echo "拉取：\`docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # 打 v* 标签时：等镜像推送成功后自动创建 GitHub Release（源码包由 GitHub 自动附带）
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare release notes
+        id: notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # 0.x 或带预发布后缀的都算预览版
+          case "$VERSION" in
+            0.*|*-*) echo "prerelease=true"  >> "$GITHUB_OUTPUT"; echo "label=预览版" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "prerelease=false" >> "$GITHUB_OUTPUT"; echo "label=正式版" >> "$GITHUB_OUTPUT" ;;
+          esac
+          # 从 CHANGELOG.md 抽出当前版本的条目
+          if grep -q "^## ${VERSION}" CHANGELOG.md; then
+            awk -v ver="$VERSION" '/^## / { show = (index($0, "## " ver) == 1) } show' CHANGELOG.md > release-notes.md
+          else
+            echo "## v${VERSION}" > release-notes.md
+          fi
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "### 容器镜像"
+            echo ""
+            echo '```bash'
+            echo "docker pull ghcr.io/${GITHUB_REPOSITORY}:${VERSION}"
+            echo '```'
+            echo ""
+            echo "多架构：\`linux/amd64\`、\`linux/arm64\`。源码包见下方 Assets。"
+          } >> release-notes.md
+          echo "----- release notes -----"
+          cat release-notes.md
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "v${{ steps.notes.outputs.version }} · ${{ steps.notes.outputs.label }}"
+          body_path: release-notes.md
+          prerelease: ${{ steps.notes.outputs.prerelease }}

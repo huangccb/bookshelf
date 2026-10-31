@@ -98,7 +98,7 @@ IMAGE=ghcr.io/huangccb/bookshelf:latest docker compose up -d
 | 触发 | 标签 |
 |---|---|
 | 推送 `master` | `latest`、`<分支名>`、`sha-<短哈希>` |
-| 打 `v1.1.0` 这类标签 | `1.1.0`、`1.1`、`sha-<短哈希>` |
+| 打 `v0.1.0` 这类标签 | `0.1.0`、`0.1`、`sha-<短哈希>`，并自动创建 Release |
 | PR | 只构建不推送（`pr-<编号>`） |
 
 工作流用内置的 `secrets.GITHUB_TOKEN` 登录 GHCR，不需要额外配置 Secret；
@@ -145,6 +145,29 @@ bash serve.sh restart   # 重启
 bash serve.sh status    # 查看状态
 bash serve.sh log       # 查看日志
 ```
+
+## 版本与发布
+
+版本号写在 `package.json` 的 `version` 里，变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+发一版新版本只需要打标签并推送：
+
+```bash
+# 1. 改 package.json 的 version、补 CHANGELOG.md 条目并提交
+git commit -am "发布 0.1.0"
+# 2. 打标签并推送，CI 会自动完成剩下的
+git tag -a v0.1.0 -m "v0.1.0 预览版"
+git push origin master --follow-tags
+```
+
+标签推送后 [docker.yml](.github/workflows/docker.yml) 会：
+
+1. 构建 `linux/amd64` + `linux/arm64` 镜像并推送到 `ghcr.io/huangccb/bookshelf`
+   （标签 `0.1.0`、`0.1`、`sha-xxxxxxx`）；
+2. 等镜像就绪后创建 GitHub Release，正文取自 `CHANGELOG.md` 对应版本的段落，
+   源码 zip / tar.gz 由 GitHub 自动附加；
+3. `0.x` 或带预发布后缀的版本自动标记为 **Prerelease（预览版）**，不会被当成 latest。
+
+当前版本：**0.1.0 · 预览版**。
 
 ## 默认管理员
 
@@ -218,6 +241,7 @@ Dockerfile           运行镜像
 docker-compose.yml   Compose 编排
 docker-start.sh      Docker 部署与备份脚本
 .dockerignore        镜像构建排除项
+CHANGELOG.md         版本更新日志
 .github/workflows/   GitHub Actions 构建镜像的工作流
 serve.sh             本机服务管理脚本
 ```
