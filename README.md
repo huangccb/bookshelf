@@ -15,6 +15,7 @@
 - 自动识别正文编码，UTF-8 / GBK / Big5 的中文 TXT 与 EPUB 都不会乱码
 - 后台控制面板：书籍列表、修改、删除、详情、批量删除，账户与权限管理
 - Docker 一键部署，数据卷持久化
+- GitHub Actions 自动构建多架构镜像并推送到 GHCR
 
 ## 快速开始
 
@@ -65,6 +66,47 @@ bash docker-start.sh up
 ```bash
 docker compose up -d --build
 docker compose logs -f
+```
+
+### 方式三：用 CI 构建好的镜像（免本地构建）
+
+仓库自带 GitHub Actions 工作流 `.github/workflows/docker.yml`：推送到 `master`、
+打 `v*` 标签或手动触发时，会构建 `linux/amd64` + `linux/arm64` 双架构镜像并推送到
+GitHub Container Registry。直接拉取即可：
+
+```bash
+docker pull ghcr.io/huangccb/bookshelf:latest
+docker run -d --name bookshelf \
+  -p 3000:3000 \
+  -v bookshelf-data:/app/data \
+  -e ADMIN_EMAIL=admin@admin.com \
+  -e ADMIN_PASSWORD=admin123 \
+  -e JWT_SECRET=请换成随机长字符串 \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/huangccb/bookshelf:latest
+```
+
+也可以用 compose 跑同一个镜像：
+
+```bash
+IMAGE=ghcr.io/huangccb/bookshelf:latest docker compose pull
+IMAGE=ghcr.io/huangccb/bookshelf:latest docker compose up -d
+```
+
+镜像标签规则：
+
+| 触发 | 标签 |
+|---|---|
+| 推送 `master` | `latest`、`<分支名>`、`sha-<短哈希>` |
+| 打 `v1.1.0` 这类标签 | `1.1.0`、`1.1`、`sha-<短哈希>` |
+| PR | 只构建不推送（`pr-<编号>`） |
+
+工作流用内置的 `secrets.GITHUB_TOKEN` 登录 GHCR，不需要额外配置 Secret；
+若首次推送后镜像不可拉取，到仓库的 **Settings → Actions → General → Workflow permissions**
+确认已允许读写，并在包设置里把可见性改成 public（或登录后再拉私有包）：
+
+```bash
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u <你的用户名> --password-stdin
 ```
 
 ### 手动构建镜像
@@ -176,6 +218,7 @@ Dockerfile           运行镜像
 docker-compose.yml   Compose 编排
 docker-start.sh      Docker 部署与备份脚本
 .dockerignore        镜像构建排除项
+.github/workflows/   GitHub Actions 构建镜像的工作流
 serve.sh             本机服务管理脚本
 ```
 

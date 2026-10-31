@@ -1,7 +1,10 @@
 services:
   bookshelf:
     build: .
-    image: bookshelf:latest
+    # 默认用本地构建的 bookshelf:latest。想直接跑 CI 推到 GHCR 的镜像：
+    #   IMAGE=ghcr.io/huangccb/bookshelf:latest docker compose pull
+    #   IMAGE=ghcr.io/huangccb/bookshelf:latest docker compose up -d
+    image: "${IMAGE:-bookshelf:latest}"
     container_name: bookshelf
     restart: unless-stopped
     ports:
