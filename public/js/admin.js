@@ -3,6 +3,7 @@
 
 const API_BASE = '';
 const TOKEN_KEY = 'adminToken';
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const state = {
   token: localStorage.getItem(TOKEN_KEY),
@@ -32,7 +33,10 @@ async function api(path, options = {}) {
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
       // 令牌失效：回到后台登录页，前台登录状态不受影响
-      if (state.token) clearSession();
+      if (state.token) {
+        clearSession();
+        renderLogin();
+      }
     }
     throw new Error((data && data.error) || res.statusText || '请求失败');
   }
@@ -99,7 +103,7 @@ function clearSession() {
 
 function logout() {
   clearSession();
-  render();
+  renderLogin();
 }
 
 async function restoreSession() {
@@ -312,7 +316,7 @@ function sortHeader(key, label) {
 
 function thumb(book) {
   if (book.cover) {
-    return `<img src="/api/books/${book.id}/cover" alt="" loading="lazy" />`;
+    return `<img src="/api/books/${book.id}/cover?v=${encodeURIComponent(book.cover)}" alt="" loading="lazy" />`;
   }
   return `<div class="admin-thumb-fallback">${escapeHtml(book.format || '')}</div>`;
 }
@@ -370,6 +374,7 @@ function viewBooks() {
         <div class="admin-stat"><div class="admin-stat-label">书籍</div><div class="admin-stat-value">${formatNumber(state.stats.books)}</div></div>
         <div class="admin-stat"><div class="admin-stat-label">账户</div><div class="admin-stat-value">${formatNumber(state.stats.users)}</div></div>
         <div class="admin-stat"><div class="admin-stat-label">管理员</div><div class="admin-stat-value">${formatNumber(state.stats.admins)}</div></div>
+        <div class="admin-stat"><div class="admin-stat-label">待审批</div><div class="admin-stat-value">${formatNumber(state.stats.pending)}</div></div>
         <div class="admin-stat"><div class="admin-stat-label">文件总量</div><div class="admin-stat-value">${formatSize(state.stats.size)}</div></div>
       </div>
     ` : ''}
@@ -447,38 +452,75 @@ function refreshBookTable() {
 // ---------- 账户与权限 ----------
 
 const ROLE_LABEL = { admin: '管理员', user: '普通用户' };
+const STATUS_META = {
+  pending: { label: '待审批', className: 'pending' },
+  active: { label: '已批准', className: 'active' },
+  rejected: { label: '已拒绝', className: 'rejected' }
+};
+
+// 历史数据没有 status，按已批准处理
+function userStatus(user) {
+  return STATUS_META[user.status] ? user.status : 'active';
+}
+
+// 操作区按审批状态切换：待审批只能批准/拒绝，拒绝后仍可重新批准
+function userActions(user, isSelf) {
+  const status = userStatus(user);
+  const deleteButton = `<button class="btn btn-danger" data-act="delete-user" data-uid="${user.id}" ${isSelf ? 'disabled title="不能删除自己的账户"' : ''}>删除</button>`;
+
+  if (status === 'pending') {
+    return `
+      <button class="btn btn-primary" data-act="approve-user" data-uid="${user.id}">批准</button>
+      <button class="btn" data-act="reject-user" data-uid="${user.id}">拒绝</button>
+      ${deleteButton}
+    `;
+  }
+  if (status === 'rejected') {
+    return `
+      <button class="btn btn-primary" data-act="approve-user" data-uid="${user.id}">批准</button>
+      ${deleteButton}
+    `;
+  }
+  return `
+    <select class="admin-role-select" data-role-select="${user.id}" aria-label="调整 ${escapeAttr(user.email)} 的角色">
+      <option value="user" ${user.role !== 'admin' ? 'selected' : ''}>普通用户</option>
+      <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>管理员</option>
+    </select>
+    <button class="btn" data-act="reset-password" data-uid="${user.id}">重置密码</button>
+    ${deleteButton}
+  `;
+}
 
 function viewUsers() {
+  const pendingCount = state.users.filter(u => userStatus(u) === 'pending').length;
   const rows = state.users.map(u => {
     const isSelf = state.user && u.id === state.user.id;
+    const status = STATUS_META[userStatus(u)];
     return `
       <tr data-uid="${u.id}">
         <td data-label="账户">
-          <div class="admin-book-title">${escapeHtml(u.email)}</div>
+          <div class="admin-book-title">${escapeHtml(u.name || u.email)}</div>
+          <div class="admin-book-sub">${escapeHtml(u.email)}</div>
           ${isSelf ? '<div class="admin-book-sub">当前登录账户</div>' : ''}
         </td>
+        <td data-label="状态"><span class="admin-status-tag ${status.className}">${status.label}</span></td>
         <td data-label="角色"><span class="admin-role-tag ${u.role === 'admin' ? 'admin' : ''}">${ROLE_LABEL[u.role] || '普通用户'}</span></td>
         <td class="admin-mono" data-label="上传书籍">${formatNumber(u.book_count)}</td>
         <td class="admin-mono" data-label="注册时间">${formatDate(u.created_at)}</td>
         <td data-label="操作">
-          <div class="admin-row-actions">
-            <select class="admin-role-select" data-role-select="${u.id}" aria-label="调整 ${escapeAttr(u.email)} 的角色">
-              <option value="user" ${u.role !== 'admin' ? 'selected' : ''}>普通用户</option>
-              <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>管理员</option>
-            </select>
-            <button class="btn" data-act="reset-password" data-uid="${u.id}">重置密码</button>
-            <button class="btn btn-danger" data-act="delete-user" data-uid="${u.id}" ${isSelf ? 'disabled title="不能删除自己的账户"' : ''}>删除</button>
-          </div>
+          <div class="admin-row-actions">${userActions(u, isSelf)}</div>
         </td>
       </tr>
     `;
   }).join('');
 
+  const pendingText = pendingCount > 0 ? `${pendingCount} 个待审批` : '暂无待审批申请';
+
   return `
     <div class="admin-page-head">
       <div>
         <h1 class="admin-page-title">账户与权限</h1>
-        <p class="admin-page-desc">在角色下拉框里切换「普通用户」与「管理员」，保存后立即生效。</p>
+        <p class="admin-page-desc">共 ${formatNumber(state.users.length)} 个账户，${pendingText}。批准后账户即可用注册邮箱和密码登录；注册账户默认是普通用户。</p>
       </div>
       <div class="admin-toolbar-right">
         <button class="btn" data-act="refresh">刷新</button>
@@ -490,7 +532,7 @@ function viewUsers() {
       ${state.users.length === 0 ? '<div class="admin-empty">还没有账户。</div>' : `
         <table class="admin-table">
           <thead>
-            <tr><th>邮箱</th><th>角色</th><th>上传书籍</th><th>注册时间</th><th>操作</th></tr>
+            <tr><th>账户</th><th>状态</th><th>角色</th><th>上传书籍</th><th>注册时间</th><th>操作</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
@@ -498,6 +540,7 @@ function viewUsers() {
     </div>
     <div class="admin-footnote">
       管理员拥有全部权限；普通用户只能阅读、下载、上传书籍，并修改自己上传的书籍，不能删除任何书籍，也不能进入后台。
+      拒绝注册申请不会删除账户，邮箱仍被占用；如需让申请人重新注册，请删除该账户。
     </div>
   `;
 }
@@ -613,7 +656,7 @@ function openDetail(book) {
     ['上传时间', formatDate(book.created_at)]
   ];
   const cover = book.cover
-    ? `<img src="/api/books/${book.id}/cover" alt="《${escapeAttr(book.title)}》封面" />`
+    ? `<img src="/api/books/${book.id}/cover?v=${encodeURIComponent(book.cover)}" alt="《${escapeAttr(book.title)}》封面" />`
     : `<div class="admin-thumb-fallback">${escapeHtml(book.format || '')}</div>`;
 
   openModal('书籍详情', `
@@ -854,6 +897,7 @@ function openCreateUser() {
           <option value="user">普通用户</option>
           <option value="admin">管理员</option>
         </select>
+        <div class="upload-hint">后台创建的账户直接可用，不需要审批。</div>
       </div>
     </form>
   `, `
@@ -866,6 +910,10 @@ function openCreateUser() {
     const role = document.getElementById('new-role').value;
     if (!email || !password) {
       showMsg('create-msg', '邮箱和密码不能为空', true);
+      return;
+    }
+    if (!EMAIL_PATTERN.test(email)) {
+      showMsg('create-msg', '邮箱格式不正确', true);
       return;
     }
     try {
@@ -941,6 +989,44 @@ async function changeRole(user, role) {
   }
 }
 
+// 批准注册申请：批准后账户才能登录，角色仍是普通用户
+async function approveUser(btn, user) {
+  if (btn) btn.disabled = true;
+  try {
+    await api('/api/admin/users/' + user.id, { method: 'PUT', body: { status: 'active' } });
+    toast('已批准 ' + user.email);
+    await Promise.all([loadUsers(), loadStats()]);
+    renderView();
+  } catch (err) {
+    toast('批准失败：' + err.message, true);
+    await Promise.all([loadUsers(), loadStats()]);
+    renderView();
+  }
+}
+
+// 拒绝注册申请：只改状态，邮箱仍被占用，之后仍可重新批准
+function askRejectUser(user) {
+  confirmDialog({
+    title: '拒绝注册申请',
+    html: `确定拒绝 ${escapeHtml(user.email)} 的注册申请吗？<br /><strong>拒绝后该账户不能登录，邮箱仍被占用；之后仍可再次批准。</strong>`,
+    confirmText: '拒绝申请',
+    danger: true,
+    onConfirm: async () => {
+      try {
+        await api('/api/admin/users/' + user.id, { method: 'PUT', body: { status: 'rejected' } });
+        closeModal();
+        toast('已拒绝 ' + user.email);
+        await Promise.all([loadUsers(), loadStats()]);
+        renderView();
+      } catch (err) {
+        toast('拒绝失败：' + err.message, true);
+        await Promise.all([loadUsers(), loadStats()]);
+        renderView();
+      }
+    }
+  });
+}
+
 // ---------- 事件绑定 ----------
 
 function bindView() {
@@ -980,6 +1066,12 @@ function bindView() {
       askDelete(book);
     } else if (act === 'create-user') {
       openCreateUser();
+    } else if (act === 'approve-user') {
+      const user = state.users.find(u => u.id === btn.dataset.uid);
+      if (user) approveUser(btn, user);
+    } else if (act === 'reject-user') {
+      const user = state.users.find(u => u.id === btn.dataset.uid);
+      if (user) askRejectUser(user);
     } else if (act === 'reset-password') {
       const user = state.users.find(u => u.id === btn.dataset.uid);
       if (user) openResetPassword(user);

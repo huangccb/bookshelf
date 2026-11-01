@@ -148,4 +148,66 @@ async function extractEpub(buffer, options = {}) {
   return { chapters };
 }
 
-module.exports = { extractEpub };
+// 读取 EPUB 内嵌封面：优先 OPF 的 meta name="cover"，其次 cover-image 属性，再次常见文件名
+async function extractEpubCover(buffer) {
+  const zip = await JSZip.loadAsync(buffer);
+  let opfPath = 'OEBPS/content.opf';
+  const containerFile = zip.file('META-INF/container.xml');
+  if (containerFile) {
+    const containerXml = await containerFile.async('text');
+    const match = containerXml.match(/full-path=["']([^"']+)["']/);
+    if (match) opfPath = match[1];
+  }
+
+  const opfFile = zip.file(opfPath);
+  if (!opfFile) return null;
+  const opfXml = await opfFile.async('text');
+  const opfDir = opfPath.includes('/') ? opfPath.substring(0, opfPath.lastIndexOf('/') + 1) : '';
+
+  const attr = (tag, name) => {
+    const m = tag.match(new RegExp('\\b' + name + '\\s*=\\s*["\']([^"\']+)["\']', 'i'));
+    return m ? m[1] : '';
+  };
+  const items = [...opfXml.matchAll(/<item\b[^>]*>/gi)].map(m => m[0]);
+  let href = '';
+
+  const coverMeta = opfXml.match(/<meta\b[^>]*name=["']cover["'][^>]*content=["']([^"']+)["'][^>]*>/i)
+    || opfXml.match(/<meta\b[^>]*content=["']([^"']+)["'][^>]*name=["']cover["'][^>]*>/i);
+  if (coverMeta) {
+    const item = items.find(tag => attr(tag, 'id') === coverMeta[1]);
+    if (item) href = attr(item, 'href');
+  }
+  if (!href) {
+    const item = items.find(tag => (attr(tag, 'properties') || '').split(/\s+/).includes('cover-image'));
+    if (item) href = attr(item, 'href');
+  }
+  if (!href) {
+    const item = items.find(tag => attr(tag, 'id') === 'cover' && /\.(?:jpe?g|png|webp|gif)$/i.test(attr(tag, 'href')));
+    if (item) href = attr(item, 'href');
+  }
+
+  let coverPath = '';
+  if (href) {
+    let rawHref = href.split(/[?#]/)[0];
+    try { rawHref = decodeURIComponent(rawHref); } catch (e) {}
+    coverPath = resolvePath(opfDir, rawHref);
+  }
+  if (!coverPath || !zip.file(coverPath)) {
+    const candidates = Object.keys(zip.files)
+      .filter(p => !zip.files[p].dir && /(^|\/)cover\.(?:jpe?g|png|webp|gif)$/i.test(p))
+      .sort((a, b) => a.length - b.length);
+    coverPath = candidates[0] || '';
+  }
+  if (!coverPath) return null;
+  const file = zip.file(coverPath);
+  if (!file) return null;
+
+  const ext = coverPath.split('.').pop().toLowerCase();
+  const contentType = ext === 'png' ? 'image/png'
+    : ext === 'webp' ? 'image/webp'
+    : ext === 'gif' ? 'image/gif'
+    : 'image/jpeg';
+  return { buffer: await file.async('nodebuffer'), contentType };
+}
+
+module.exports = { extractEpub, extractEpubCover };

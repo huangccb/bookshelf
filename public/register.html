@@ -14,58 +14,139 @@
     <div class="auth-box">
       <div class="auth-logo">
         <h1>注册账户</h1>
-        <p>创建新账户以开始使用</p>
+        <p>注册后需要管理员审批，通过后即可登录</p>
       </div>
-      <div class="panel">
-        <div class="panel-title">填写信息</div>
-        <div id="register-msg"></div>
+      <div class="panel" id="register-panel">
+        <div class="panel-title" id="register-panel-title">填写信息</div>
+        <div id="register-msg" role="alert" aria-live="polite"></div>
         <form id="register-form" novalidate>
           <div class="form-group">
-            <label for="reg-email">邮箱</label>
-            <input type="email" id="reg-email" name="email" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="邮箱地址" />
+            <label for="reg-name">显示名称</label>
+            <input type="text" id="reg-name" name="name" maxlength="32" autocomplete="nickname" aria-required="true" aria-describedby="reg-name-hint reg-name-error" placeholder="显示名称" />
+            <div class="upload-hint" id="reg-name-hint">用于顶栏和账户中心展示，1 到 32 个字符</div>
+            <div class="field-error" id="reg-name-error"></div>
           </div>
           <div class="form-group">
-            <label for="reg-name">用户名</label>
-            <input type="text" id="reg-name" name="name" maxlength="32" autocomplete="nickname" placeholder="用户名（选填，默认用邮箱前缀）" />
-            <div class="upload-hint">顶栏显示的名字，可稍后在账户中心修改</div>
+            <label for="reg-email">邮箱</label>
+            <input type="email" id="reg-email" name="email" autocomplete="username" autocapitalize="none" spellcheck="false" aria-required="true" aria-describedby="reg-email-hint reg-email-error" placeholder="邮箱地址" />
+            <div class="upload-hint" id="reg-email-hint">用于登录，同一邮箱只能注册一次</div>
+            <div class="field-error" id="reg-email-error"></div>
           </div>
           <div class="form-group">
             <label for="reg-password">密码</label>
-            <input type="password" id="reg-password" name="password" autocomplete="new-password" required placeholder="至少 6 位" />
+            <input type="password" id="reg-password" name="password" autocomplete="new-password" aria-required="true" aria-describedby="reg-password-hint reg-password-error" placeholder="至少 6 位" />
+            <div class="upload-hint" id="reg-password-hint">至少 6 位</div>
+            <div class="field-error" id="reg-password-error"></div>
           </div>
-          <button type="submit" class="btn btn-primary btn-block" id="register-submit">注册</button>
+          <button type="submit" class="btn btn-primary btn-block" id="register-submit">提交注册申请</button>
         </form>
         <p class="auth-switch">
-          已有账号？<a href="/login.html">登录</a>
+          已有账号？<a href="/login">登录</a>
         </p>
       </div>
     </div>
   </div>
   <script>
-    const TOKEN_KEY = 'token';
+    const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const form = document.getElementById('register-form');
     const submitBtn = document.getElementById('register-submit');
+    const messageBox = document.getElementById('register-msg');
 
-    function showError(text) {
-      document.getElementById('register-msg').innerHTML =
-        '<div class="message error">' + text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+    const fields = {
+      name: {
+        input: document.getElementById('reg-name'),
+        error: document.getElementById('reg-name-error'),
+        validate(value) {
+          const text = value.trim();
+          if (!text) return '请填写显示名称';
+          if (text.length > 32) return '显示名称不能超过 32 个字符';
+          return '';
+        }
+      },
+      email: {
+        input: document.getElementById('reg-email'),
+        error: document.getElementById('reg-email-error'),
+        validate(value) {
+          const text = value.trim();
+          if (!text) return '请输入邮箱地址';
+          if (!EMAIL_PATTERN.test(text)) return '邮箱格式不正确';
+          return '';
+        }
+      },
+      password: {
+        input: document.getElementById('reg-password'),
+        error: document.getElementById('reg-password-error'),
+        validate(value) {
+          if (!value) return '请输入密码';
+          if (value.length < 6) return '密码至少 6 位';
+          return '';
+        }
+      }
+    };
+
+    function escapeHtml(text) {
+      return String(text == null ? '' : text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
     }
+
+    function showMessage(text) {
+      messageBox.innerHTML = '<div class="message error">' + escapeHtml(text) + '</div>';
+    }
+
+    function clearMessage() {
+      messageBox.innerHTML = '';
+    }
+
+    function setFieldError(key, text) {
+      const field = fields[key];
+      if (!field) return;
+      field.error.textContent = text;
+      if (text) field.input.setAttribute('aria-invalid', 'true');
+      else field.input.removeAttribute('aria-invalid');
+    }
+
+    function validateField(key) {
+      const field = fields[key];
+      const error = field.validate(field.input.value);
+      setFieldError(key, error);
+      return error === '';
+    }
+
+    function validateAll() {
+      let firstInvalid = null;
+      Object.keys(fields).forEach(key => {
+        if (!validateField(key) && !firstInvalid) firstInvalid = key;
+      });
+      if (firstInvalid) {
+        fields[firstInvalid].input.focus();
+        return false;
+      }
+      return true;
+    }
+
+    Object.keys(fields).forEach(key => {
+      const field = fields[key];
+      // 失焦时校验当前字段，输入时先撤掉旧错误
+      field.input.addEventListener('blur', () => validateField(key));
+      field.input.addEventListener('input', () => {
+        setFieldError(key, '');
+        clearMessage();
+      });
+    });
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const email = document.getElementById('reg-email').value.trim();
-      const password = document.getElementById('reg-password').value;
-      const name = document.getElementById('reg-name').value.trim();
-      if (!email) {
-        showError('请输入邮箱地址');
-        return;
-      }
-      if (!password || password.length < 6) {
-        showError('密码至少 6 位');
-        return;
-      }
+      clearMessage();
+      if (!validateAll()) return;
+
+      const email = fields.email.input.value.trim();
+      const password = fields.password.input.value;
+      const name = fields.name.input.value.trim();
+
       submitBtn.disabled = true;
-      submitBtn.textContent = '注册中…';
+      submitBtn.textContent = '提交中…';
       try {
         const res = await fetch('/api/auth/register', {
           method: 'POST',
@@ -73,15 +154,47 @@
           body: JSON.stringify({ email, password, name })
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || '注册失败');
-        localStorage.setItem(TOKEN_KEY, data.token);
-        window.location.replace('/');
+        if (!res.ok) {
+          if (res.status === 409) {
+            showMessage('该邮箱已被注册，请直接登录。');
+            setFieldError('email', '该邮箱已被注册');
+            fields.email.input.focus();
+          } else {
+            showMessage(data.error || '注册失败，请稍后重试。');
+          }
+          return;
+        }
+        renderPending(data.user && data.user.email ? data.user.email : email);
       } catch (err) {
-        showError(err.message || '注册失败');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '注册';
+        showMessage('网络异常，请检查连接后重试。');
+      } finally {
+        if (document.getElementById('register-submit')) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = '提交注册申请';
+        }
       }
     });
+
+    // 注册只提交申请，不保存令牌；审批通过前不能登录
+    function renderPending(email) {
+      // 清掉浏览器里可能残留的旧会话，避免被误认为新账户已登录
+      localStorage.removeItem('token');
+      const panel = document.getElementById('register-panel');
+      panel.innerHTML = `
+        <div class="auth-status" role="status" aria-live="polite">
+          <span class="account-avatar auth-status-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7.2 18h9.4a3.4 3.4 0 0 0 .5-6.76A4.6 4.6 0 0 0 8.6 10a3.6 3.6 0 0 0-1.4 8z"/></svg>
+          </span>
+          <span class="status-pill pending">等待审批</span>
+          <h2 class="auth-status-title" id="register-done-title" tabindex="-1">注册申请已提交</h2>
+          <p>管理员审批通过后，可用 <strong>${escapeHtml(email)}</strong> 和刚才设置的密码登录。审批期间无法登录。</p>
+          <a class="btn btn-primary btn-block" href="/login">返回登录</a>
+          <p class="auth-status-note">审批结果不会发送邮件，请稍后重试登录或联系管理员。</p>
+        </div>
+      `;
+      const title = document.getElementById('register-done-title');
+      if (title) title.focus();
+    }
   </script>
 </body>
 </html>

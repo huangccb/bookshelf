@@ -1,5 +1,6 @@
 // API base URL
 const API_BASE = '';
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // State
 const state = {
@@ -9,13 +10,16 @@ const state = {
   currentBook: null,
   viewMode: localStorage.getItem('viewMode') || 'grid',
   metaResults: [],
-  pendingCoverUrl: '',
   readerSettings: loadReaderSettings(),
   history: [],
   historyTotal: 0,
   myBooks: [],
   myBooksTotal: 0
 };
+
+// 封面文件预览用的临时 URL，切换文件时及时释放
+let uploadCoverObjectUrl = '';
+let editCoverObjectUrl = '';
 
 // 读取阅读偏好，并迁移旧版主题名与行距数值
 function loadReaderSettings() {
@@ -205,7 +209,7 @@ function topBar() {
       <div class="nav-links">
         ${userChip()}
         <a class="btn" href="/">书架</a>
-        <a class="btn" href="#/upload">上传书籍</a>
+        <a class="btn btn-primary" href="#/upload">上传书籍</a>
         <button class="btn btn-danger" onclick="logout()">退出</button>
       </div>
     </div>
@@ -239,7 +243,7 @@ function userChip() {
 
 // ---------- 书架 ----------
 
-// 把书按系列归并：一个系列 = 一个条目，用第 1 本书（有封面的优先）代表它
+// 把书按系列归并：一个系列 = 一个条目，封面固定使用第 1 卷
 function buildEntries(books) {
   const seriesMap = new Map();
   const singles = [];
@@ -260,7 +264,7 @@ function buildEntries(books) {
       name,
       books: vols,
       first: vols[0],
-      cover: vols.find(b => b.cover) || vols[0]
+      cover: vols[0]
     });
   });
   singles.forEach(book => {
@@ -270,12 +274,24 @@ function buildEntries(books) {
   return entries.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
 }
 
+// 系列书籍的显示名：系列名 + 卷数；单行本使用书名
+function seriesVolumeTitle(book) {
+  if (!book) return '';
+  const series = String(book.series || '').trim();
+  if (series) {
+    const volume = Number(book.volume_number) || 0;
+    return volume > 0 ? `${series} 第 ${volume} 卷` : series;
+  }
+  return String(book.title || '').trim();
+}
+
 // 封面：有图用图，没图用书名文字占位
 function coverBlock(book, extraClass) {
   if (!book) return '';
   const cls = extraClass ? ' ' + extraClass : '';
   if (book.cover) {
-    return `<img class="book-cover-img${cls}" src="${API_BASE}/api/books/${book.id}/cover" alt="${escapeAttr(book.title)}" loading="lazy" />`;
+    const version = encodeURIComponent(book.cover);
+    return `<img class="book-cover-img${cls}" src="${API_BASE}/api/books/${book.id}/cover?v=${version}" alt="${escapeAttr(book.title)}" loading="lazy" />`;
   }
   return `<div class="book-cover-fallback${cls}">${escapeHtml(book.title)}</div>`;
 }
@@ -412,16 +428,16 @@ async function renderBookDetail(container) {
       ? books.filter(b => b.series === current.series).sort((a, b) => (a.volume_number || 0) - (b.volume_number || 0))
       : [current];
     const coverBook = current.cover ? current : (volumes.find(b => b.cover) || current);
-    const title = isSeries ? current.series : current.title;
+    const title = isSeries ? seriesVolumeTitle(current) : current.title;
 
     const volumeRows = volumes.map(book => {
       const vol = book.volume_number ? `第 ${book.volume_number} 卷` : '全一册';
       const isActive = book.id === current.id;
       return `
-        <div class="book-list-row${isActive ? ' active' : ''}">
+        <div class="book-list-row${isActive ? ' active' : ''}" data-book-href="#/book/${book.id}">
           <span class="col-title">
             <span class="row-thumb">${coverBlock(book)}</span>
-            <span class="row-title-text">${escapeHtml(book.title)}${isActive ? ' <span class="current-badge">当前</span>' : ''}</span>
+            <a class="row-title-text row-title-link" href="#/book/${book.id}">${escapeHtml(seriesVolumeTitle(book))}${isActive ? ' <span class="current-badge">当前</span>' : ''}</a>
           </span>
           <span class="col-author">${escapeHtml(book.author || '未知作者')}</span>
           <span class="col-volume">${vol}</span>
@@ -478,11 +494,14 @@ async function renderBookDetail(container) {
 
         ${current.can_edit ? `
           <div class="detail-edit-bar">
+            ${isSeries ? '<span class="detail-edit-hint">点击卷册切换当前书籍，再点「修改」编辑该卷。</span>' : ''}
             <button class="btn btn-primary" onclick="navigate('/edit/${current.id}')">修改</button>
           </div>
         ` : ''}
       </div>
     `;
+
+    bindBookListRows();
 
   } catch (err) {
     container.innerHTML = topBar() + `<div class="container"><div class="message error">加载失败：${escapeHtml(err.message)}</div></div>`;
@@ -490,6 +509,16 @@ async function renderBookDetail(container) {
       logout();
     }
   }
+}
+
+// 系列详情页：点击卷册行切换当前书籍，底部的「修改」会编辑当前卷
+function bindBookListRows() {
+  document.querySelectorAll('.book-list-row[data-book-href]').forEach(row => {
+    row.addEventListener('click', event => {
+      if (event.target.closest('button, a, input, select, textarea')) return;
+      navigate(row.dataset.bookHref.replace(/^#/, ''));
+    });
+  });
 }
 
 // 通用：检索元数据并渲染候选列表
@@ -539,31 +568,343 @@ async function applyMetadataToUpload(id) {
     document.getElementById('publish_year').value = d.year || '';
     document.getElementById('publisher').value = d.publisher || '';
     document.getElementById('isbn').value = d.isbn || '';
+    const seriesInput = document.getElementById('series');
+    if (d.series) {
+      seriesInput.value = d.series;
+      seriesInput.title = d.series;
+    }
+    syncUploadTitleRequirement();
     if (d.description) document.getElementById('description').value = d.description;
-    state.pendingCoverUrl = d.cover || '';
-    renderUploadCoverPreview(d.cover);
+    const urlInput = document.getElementById('cover_url');
+    if (urlInput) urlInput.value = d.cover || '';
+    refreshUploadCoverPreview();
     box.innerHTML = `<div class="meta-applied">已填入「${escapeHtml(d.title || '')}」的元数据${d.cover ? '与封面' : ''}，确认后点击「上传」。</div>`;
   } catch (err) {
     box.innerHTML = `<div class="message error">${escapeHtml(err.message)}</div>`;
   }
 }
 
-function renderUploadCoverPreview(coverUrl) {
-  const el = document.getElementById('upload-cover-preview');
-  if (!el) return;
-  if (!coverUrl) {
-    el.innerHTML = '';
-    return;
-  }
-  el.innerHTML = `
+// 封面预览：本地文件优先，其次预览填写的图片地址
+function coverPreviewHtml(src, label) {
+  return `
     <div class="upload-cover-preview">
-      <img src="${API_BASE}/api/metadata/cover?url=${encodeURIComponent(coverUrl)}" alt="封面预览" />
-      <span class="upload-cover-label">封面预览</span>
+      <img src="${escapeAttr(src)}" alt="封面预览" />
+      <span class="upload-cover-label">${escapeHtml(label)}</span>
     </div>
   `;
 }
 
+function revokeUploadCoverObjectUrl() {
+  if (uploadCoverObjectUrl) {
+    URL.revokeObjectURL(uploadCoverObjectUrl);
+    uploadCoverObjectUrl = '';
+  }
+}
 
+function refreshUploadCoverPreview() {
+  const el = document.getElementById('upload-cover-preview');
+  if (!el) return;
+  revokeUploadCoverObjectUrl();
+
+  const fileInput = document.getElementById('cover_file');
+  const file = fileInput && fileInput.files && fileInput.files[0];
+  if (file) {
+    uploadCoverObjectUrl = URL.createObjectURL(file);
+    el.innerHTML = coverPreviewHtml(uploadCoverObjectUrl, '本地封面（优先使用）');
+    return;
+  }
+
+  const urlInput = document.getElementById('cover_url');
+  const url = urlInput ? urlInput.value.trim() : '';
+  if (url) {
+    el.innerHTML = coverPreviewHtml(`${API_BASE}/api/metadata/cover?url=${encodeURIComponent(url)}`, '封面预览');
+    return;
+  }
+  el.innerHTML = '';
+}
+
+// 自定义文件选择框：原生 input 透明覆盖整个区域，旁边显示已选文件名
+function bindFileField(inputId, nameId) {
+  const input = document.getElementById(inputId);
+  const nameEl = document.getElementById(nameId);
+  if (!input || !nameEl) return;
+  const emptyText = nameEl.textContent || '未选择文件';
+  const sync = () => {
+    const file = input.files && input.files[0];
+    nameEl.textContent = file ? file.name : emptyText;
+    nameEl.title = file ? file.name : '';
+  };
+  input.addEventListener('change', sync);
+  sync();
+}
+
+// ---------- 系列选择弹窗 ----------
+
+// 繁简字符映射由 /js/zh-hans-map.js 提供；缺失时退回原文
+const ZH_HANS_CHARS = (typeof window !== 'undefined' && window.ZH_HANS_CHARS) || {};
+
+function toSimplifiedChinese(value) {
+  return Array.from(String(value || ''))
+    .map(ch => ZH_HANS_CHARS[ch] || ch)
+    .join('');
+}
+
+function normalizeSeriesName(value) {
+  return toSimplifiedChinese(value)
+    .toLowerCase()
+    .replace(/[\s·・\-—_.,，。:：!！?？'"“”‘’()（）【】\[\]]/g, '');
+}
+
+function levenshteinDistance(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      row[j] = Math.min(row[j - 1] + 1, previous[j] + 1, previous[j - 1] + cost);
+    }
+    previous = row;
+  }
+  return previous[b.length];
+}
+
+function seriesSimilarity(query, name) {
+  const q = normalizeSeriesName(query);
+  const n = normalizeSeriesName(name);
+  if (!q || !n) return 0;
+  if (q === n) return 1;
+  if (n.includes(q)) return 0.95;
+  if (q.includes(n)) return 0.9;
+  const distance = levenshteinDistance(q, n);
+  return 1 - distance / Math.max(q.length, n.length);
+}
+
+function fuzzySeriesMatches(query, series, limit, threshold) {
+  const minScore = threshold == null ? 0.35 : threshold;
+  return series
+    .map(name => ({ name, score: seriesSimilarity(query, name) }))
+    .filter(item => item.score >= minScore)
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, 'zh-Hans-CN'))
+    .slice(0, limit || 20)
+    .map(item => item.name);
+}
+
+// 上传页：有系列时书名不再是必填项
+function syncUploadTitleRequirement() {
+  const seriesInput = document.getElementById('series');
+  const titleInput = document.getElementById('title');
+  if (!seriesInput || !titleInput) return;
+  if (seriesInput.value.trim()) titleInput.removeAttribute('required');
+  else titleInput.setAttribute('required', '');
+}
+
+function closeSeriesModal() {
+  const host = document.getElementById('series-modal-host');
+  if (!host) return;
+  const previousFocus = host.dataset.previousFocus ? document.getElementById(host.dataset.previousFocus) : null;
+  host.innerHTML = '';
+  host.dataset.previousFocus = '';
+  document.body.classList.remove('modal-open');
+  if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
+}
+
+async function openSeriesPicker() {
+  const seriesInput = document.getElementById('series');
+  if (!seriesInput) return;
+
+  let host = document.getElementById('series-modal-host');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'series-modal-host';
+    document.body.appendChild(host);
+  }
+  host.dataset.previousFocus = document.activeElement && document.activeElement.id ? document.activeElement.id : 'series';
+  const pickerToken = String(Date.now()) + Math.random().toString(36).slice(2);
+  host.dataset.pickerToken = pickerToken;
+  host.innerHTML = `
+    <div class="app-modal-mask" data-series-mask>
+      <div class="app-modal series-modal" role="dialog" aria-modal="true" aria-labelledby="series-modal-title">
+        <header class="app-modal-head">
+          <h2 id="series-modal-title">选择系列</h2>
+          <button type="button" class="app-modal-close" data-series-close aria-label="关闭">×</button>
+        </header>
+        <div class="app-modal-body">
+          <div id="series-list-pane">
+            <div class="series-search">
+              <input type="search" id="series-search" placeholder="搜索已有系列名" autocomplete="off" aria-label="搜索已有系列名" />
+            </div>
+            <div class="series-modal-list" id="series-modal-list"><div class="loading"></div></div>
+            <div class="app-modal-actions">
+              <button type="button" class="btn" data-series-close>取消</button>
+            </div>
+          </div>
+          <div id="series-new-pane" hidden>
+            <button type="button" class="series-back" id="series-back">← 返回系列列表</button>
+            <p class="app-modal-desc">输入新的系列名。保存前会检查是否有相似系列。</p>
+            <div class="form-group">
+              <label for="series-new-name">系列名</label>
+              <input type="text" id="series-new-name" maxlength="80" placeholder="输入新系列名" />
+            </div>
+            <div id="series-dup-warning"></div>
+            <div class="app-modal-actions">
+              <button type="button" class="btn" data-series-close>取消</button>
+              <button type="button" class="btn btn-primary" id="series-new-confirm">使用该系列名</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.classList.add('modal-open');
+
+  host.querySelector('[data-series-mask]').addEventListener('click', e => {
+    if (e.target.hasAttribute('data-series-mask')) closeSeriesModal();
+  });
+  host.querySelectorAll('[data-series-close]').forEach(btn => btn.addEventListener('click', closeSeriesModal));
+
+  const search = document.getElementById('series-search');
+  const listPane = document.getElementById('series-list-pane');
+  const newPane = document.getElementById('series-new-pane');
+  const newNameInput = document.getElementById('series-new-name');
+  const warning = document.getElementById('series-dup-warning');
+  const confirmNew = document.getElementById('series-new-confirm');
+
+  let series = [];
+  let listError = '';
+  let forceNewName = '';
+  const currentSeries = seriesInput.value.trim();
+
+  function selectSeries(name) {
+    seriesInput.value = name || '';
+    seriesInput.title = name || '';
+    syncUploadTitleRequirement();
+    closeSeriesModal();
+  }
+
+  function renderListItems() {
+    const list = document.getElementById('series-modal-list');
+    if (!list) return;
+    const query = search.value.trim();
+    const matches = query ? fuzzySeriesMatches(query, series, 80, 0.3) : series.slice();
+    const newLabel = query ? `新建系列「${escapeHtml(query)}」` : '新建系列';
+    const existing = matches.map(name => {
+      const active = name === currentSeries;
+      return `
+        <button type="button" class="series-option${active ? ' active' : ''}" data-series-name="${escapeAttr(name)}">
+          <span class="series-option-main">${escapeHtml(name)}</span>
+          ${active ? '<span class="series-option-tag">当前</span>' : ''}
+        </button>
+      `;
+    }).join('');
+    let empty = '';
+    if (listError) empty = '<div class="series-empty">系列列表加载失败，可直接新建系列</div>';
+    else if (series.length === 0) empty = '<div class="series-empty">还没有已有系列，点击「新建系列」开始</div>';
+    else if (matches.length === 0) empty = '<div class="series-empty">没有匹配的系列，可点击「新建系列」</div>';
+    list.innerHTML = `
+      <button type="button" class="series-option series-option-new" data-series-action="new">
+        <span class="series-option-main">${newLabel}</span>
+        <span class="series-option-tag">输入新名称</span>
+      </button>
+      <button type="button" class="series-option${currentSeries ? '' : ' active'}" data-series-action="none">
+        <span class="series-option-main">单行本</span>
+        <span class="series-option-tag">不归入系列</span>
+      </button>
+      ${existing}
+      ${empty}
+    `;
+    list.querySelectorAll('[data-series-action="new"]').forEach(btn => {
+      btn.addEventListener('click', () => showNewPane(query));
+    });
+    list.querySelectorAll('[data-series-action="none"]').forEach(btn => {
+      btn.addEventListener('click', () => selectSeries(''));
+    });
+    list.querySelectorAll('[data-series-name]').forEach(btn => {
+      btn.addEventListener('click', () => selectSeries(btn.dataset.seriesName));
+    });
+  }
+
+  function clearDuplicateWarning() {
+    forceNewName = '';
+    warning.innerHTML = '';
+    if (confirmNew) {
+      confirmNew.hidden = false;
+      confirmNew.textContent = '使用该系列名';
+    }
+  }
+
+  function showNewPane(prefill) {
+    listPane.hidden = true;
+    newPane.hidden = false;
+    newNameInput.value = prefill || '';
+    clearDuplicateWarning();
+    newNameInput.focus();
+    setTimeout(() => newNameInput.setSelectionRange(newNameInput.value.length, newNameInput.value.length), 0);
+  }
+
+  function showListPane() {
+    newPane.hidden = true;
+    listPane.hidden = false;
+    search.focus();
+  }
+
+  function confirmNewSeries() {
+    const name = newNameInput.value.trim();
+    if (!name) {
+      warning.innerHTML = '<div class="message error">请输入系列名</div>';
+      newNameInput.focus();
+      return;
+    }
+    if (forceNewName === name) {
+      selectSeries(name);
+      return;
+    }
+    const matches = fuzzySeriesMatches(name, series, 3, 0.4);
+    if (matches.length === 0) {
+      selectSeries(name);
+      return;
+    }
+    forceNewName = name;
+    warning.innerHTML = `
+      <div class="series-dup-warning">
+        <p class="series-dup-title">发现相似系列，是否使用已有系列？</p>
+        <div class="series-dup-options">
+          ${matches.map(item => `<button type="button" class="btn btn-sm" data-series-use="${escapeAttr(item)}">使用「${escapeHtml(item)}」</button>`).join('')}
+        </div>
+        <button type="button" class="btn btn-sm series-continue" id="series-continue-new">不是，继续使用「${escapeHtml(name)}」</button>
+      </div>
+    `;
+    warning.querySelectorAll('[data-series-use]').forEach(btn => {
+      btn.addEventListener('click', () => selectSeries(btn.dataset.seriesUse));
+    });
+    const continueBtn = document.getElementById('series-continue-new');
+    if (continueBtn) continueBtn.addEventListener('click', () => selectSeries(name));
+    if (confirmNew) confirmNew.hidden = true;
+  }
+
+  search.addEventListener('input', renderListItems);
+  document.getElementById('series-back').addEventListener('click', showListPane);
+  confirmNew.addEventListener('click', confirmNewSeries);
+  newNameInput.addEventListener('input', clearDuplicateWarning);
+  newNameInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      confirmNewSeries();
+    }
+  });
+
+  try {
+    const data = await api('/api/series');
+    series = Array.isArray(data.series) ? data.series : [];
+  } catch (e) {
+    listError = e.message || '系列列表加载失败';
+  }
+  if (host.dataset.pickerToken !== pickerToken || !document.getElementById('series-modal-list')) return;
+  renderListItems();
+  search.focus();
+}
 
 async function downloadBook(bookId, filename) {
   try {
@@ -589,6 +930,7 @@ async function downloadBook(bookId, filename) {
 
 async function renderBookEdit(container) {
   const bookId = currentId();
+  revokeEditCoverObjectUrl();
   container.innerHTML = topBar() + '<div class="container"><div class="loading"></div></div>';
   try {
     const book = await api('/api/books/' + bookId, { method: 'GET' });
@@ -642,19 +984,43 @@ async function renderBookEdit(container) {
               <textarea id="edit-description" rows="6" placeholder='可自行填写或修改'>${escapeHtml(book.description || '')}</textarea>
             </div>
             <div class="form-group">
-              <label>封面地址</label>
-              <input type="text" id="edit-cover" placeholder='留空则保持当前封面' />
-              <div class="upload-hint">支持豆瓣图书封面地址；留空表示不修改封面</div>
+              <label>封面</label>
+              <div id="edit-cover-preview"></div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="edit-cover">封面地址</label>
+                  <input type="url" id="edit-cover" placeholder='https://...（留空保持当前封面）' autocapitalize="none" spellcheck="false" />
+                </div>
+                <div class="form-group">
+                  <label for="edit-cover-file">上传新封面</label>
+                  <div class="file-field">
+                    <input type="file" id="edit-cover-file" accept="image/jpeg,image/png,image/webp,image/gif" />
+                    <span class="file-select-btn">选择图片</span>
+                    <span class="file-field-name" id="edit-cover-file-name">未选择文件</span>
+                  </div>
+                </div>
+              </div>
+              <div class="upload-hint">上传图片优先于地址；留空表示不修改封面。图片不超过 5MB。</div>
+              <div class="meta-actions">
+                ${book.format === 'epub' ? '<button type="button" class="btn" onclick="useEmbeddedCover()">使用内嵌封面</button>' : ''}
+                ${book.cover ? '<button type="button" class="btn btn-danger" onclick="removeCover()">删除封面</button>' : ''}
+              </div>
             </div>
             <div class="meta-actions">
               <button type="submit" class="btn btn-primary">保存修改</button>
-              ${book.cover ? '<button type="button" class="btn btn-danger" onclick="removeCover()">删除封面</button>' : ''}
               <button type="button" class="btn" onclick="navigate('/book/${bookId}')">取消</button>
             </div>
           </form>
         </div>
       </div>
     `;
+    state.currentBook = book;
+    refreshEditCoverPreview();
+    const coverFileInput = document.getElementById('edit-cover-file');
+    const coverUrlInput = document.getElementById('edit-cover');
+    if (coverFileInput) coverFileInput.addEventListener('change', refreshEditCoverPreview);
+    if (coverUrlInput) coverUrlInput.addEventListener('input', refreshEditCoverPreview);
+    bindFileField('edit-cover-file', 'edit-cover-file-name');
     document.getElementById('edit-form').addEventListener('submit', saveBookEdit);
   } catch (err) {
     container.innerHTML = topBar() + `<div class="container"><div class="message error">加载失败：${escapeHtml(err.message)}</div></div>`;
@@ -662,6 +1028,41 @@ async function renderBookEdit(container) {
       logout();
     }
   }
+}
+
+function revokeEditCoverObjectUrl() {
+  if (editCoverObjectUrl) {
+    URL.revokeObjectURL(editCoverObjectUrl);
+    editCoverObjectUrl = '';
+  }
+}
+
+function refreshEditCoverPreview() {
+  const el = document.getElementById('edit-cover-preview');
+  if (!el) return;
+  revokeEditCoverObjectUrl();
+
+  const fileInput = document.getElementById('edit-cover-file');
+  const file = fileInput && fileInput.files && fileInput.files[0];
+  if (file) {
+    editCoverObjectUrl = URL.createObjectURL(file);
+    el.innerHTML = coverPreviewHtml(editCoverObjectUrl, '新封面预览（优先使用）');
+    return;
+  }
+
+  const urlInput = document.getElementById('edit-cover');
+  const url = urlInput ? urlInput.value.trim() : '';
+  if (url) {
+    el.innerHTML = coverPreviewHtml(`${API_BASE}/api/metadata/cover?url=${encodeURIComponent(url)}`, '新封面预览');
+    return;
+  }
+
+  const book = state.currentBook;
+  if (book && book.cover) {
+    el.innerHTML = coverPreviewHtml(`${API_BASE}/api/books/${book.id}/cover?v=${encodeURIComponent(book.cover)}`, '当前封面');
+    return;
+  }
+  el.innerHTML = '<div class="upload-cover-preview"><span class="upload-cover-label">暂无封面，可上传图片、填写地址或读取 EPUB 内嵌封面</span></div>';
 }
 
 async function saveBookEdit(event) {
@@ -677,12 +1078,46 @@ async function saveBookEdit(event) {
     isbn: document.getElementById('edit-isbn').value,
     description: document.getElementById('edit-description').value
   };
+  const coverFileInput = document.getElementById('edit-cover-file');
+  const coverFile = coverFileInput && coverFileInput.files ? coverFileInput.files[0] : null;
+  if (coverFile && coverFile.size > 5 * 1024 * 1024) {
+    showMsg('edit-msg', '封面图片不能超过 5MB', true);
+    return;
+  }
   const coverUrl = document.getElementById('edit-cover').value.trim();
-  if (coverUrl) payload.cover_url = coverUrl;
+  // 上传图片优先于地址；有图片时不再请求地址
+  if (!coverFile && coverUrl) payload.cover_url = coverUrl;
+
   try {
     await api('/api/books/' + bookId, { method: 'PUT', body: payload });
-    showMsg('edit-msg', '已保存，正在返回详情…', false);
-    setTimeout(() => navigate('/book/' + bookId), 700);
+  } catch (err) {
+    showMsg('edit-msg', err.message, true);
+    return;
+  }
+
+  if (coverFile) {
+    try {
+      const fd = new FormData();
+      fd.append('cover', coverFile);
+      await api('/api/books/' + bookId + '/cover', { method: 'POST', body: fd });
+    } catch (err) {
+      showMsg('edit-msg', '信息已保存，但封面上传失败：' + err.message, true);
+      return;
+    }
+  }
+
+  revokeEditCoverObjectUrl();
+  showMsg('edit-msg', '已保存，正在返回详情…', false);
+  setTimeout(() => navigate('/book/' + bookId), 700);
+}
+
+async function useEmbeddedCover() {
+  const bookId = currentId();
+  try {
+    await api('/api/books/' + bookId + '/cover/embedded', { method: 'POST' });
+    revokeEditCoverObjectUrl();
+    showMsg('edit-msg', '已使用内嵌封面，正在刷新…', false);
+    setTimeout(() => render(), 600);
   } catch (err) {
     showMsg('edit-msg', err.message, true);
   }
@@ -692,6 +1127,7 @@ async function removeCover() {
   const bookId = currentId();
   try {
     await api('/api/books/' + bookId + '/cover', { method: 'DELETE' });
+    revokeEditCoverObjectUrl();
     showMsg('edit-msg', '封面已删除', false);
     setTimeout(() => render(), 700);
   } catch (err) {
@@ -702,20 +1138,32 @@ async function removeCover() {
 // ---------- 上传 ----------
 
 function renderUpload(container) {
-  state.pendingCoverUrl = '';
+  revokeUploadCoverObjectUrl();
   container.innerHTML = topBar() + `
     <div class="container">
       <div class="panel panel-narrow">
         <div class="panel-title">上传新书</div>
         <div id="upload-msg"></div>
         <form id="upload-form">
+          <div class="form-row form-row-series">
+            <div class="form-group">
+              <label for="series">系列</label>
+              <input type="text" id="series" readonly placeholder="点击选择已有系列，或新建系列" aria-haspopup="dialog" />
+              <div class="upload-hint">不选择表示单行本；选择系列后书名和简介都不是必填</div>
+            </div>
+            <div class="form-group">
+              <label for="volume_number">卷号</label>
+              <input type="number" id="volume_number" min="0" placeholder="1" />
+              <div class="upload-hint">0 表示无卷号</div>
+            </div>
+          </div>
           <div class="form-group">
             <label>书名</label>
             <div class="meta-search">
               <input type="text" id="title" required placeholder='例如：活着' />
               <button type="button" class="btn btn-primary" onclick="searchMetadataForUpload()">搜索元数据</button>
             </div>
-            <div class="upload-hint">输入书名后点「搜索元数据」，可自动补全作者、出版年、出版社、简介与封面</div>
+            <div class="upload-hint">有系列时可不填；输入书名后点「搜索元数据」，可自动补全作者、出版年、出版社、系列、简介与封面</div>
           </div>
 
           <div id="upload-meta-results" class="meta-results"></div>
@@ -741,32 +1189,74 @@ function renderUpload(container) {
           <div class="form-group">
             <label>简介</label>
             <textarea id="description" rows="5" placeholder='可自动填入，也可自行填写或修改'></textarea>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>系列名</label>
-              <input type="text" id="series" placeholder='同一系列的书籍填同一个系列名' />
-              <div class="upload-hint">同一系列会自动归并为一部作品</div>
-            </div>
-            <div class="form-group">
-              <label>卷号</label>
-              <input type="number" id="volume_number" min="0" placeholder="1" />
-              <div class="upload-hint">0 表示无卷号</div>
-            </div>
+            <div class="upload-hint">选填；有系列时也可留空</div>
           </div>
           <div class="form-group">
-            <label>书籍文件</label>
-            <input type="file" id="file" accept=".epub,.pdf,.txt,.docx,.mobi,.azw3" required />
+            <label for="file">书籍文件</label>
+            <div class="file-field">
+              <input type="file" id="file" accept=".epub,.pdf,.txt,.docx,.mobi,.azw3" required />
+              <span class="file-select-btn">选择文件</span>
+              <span class="file-field-name" id="file-name">未选择文件</span>
+            </div>
             <div class="upload-hint">支持 EPUB、PDF、TXT、DOCX、MOBI、AZW3</div>
           </div>
-          <div id="upload-cover-preview"></div>
-          <button type="submit" class="btn btn-primary" style="width:100%">上传</button>
+          <div class="form-group">
+            <label>封面</label>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="cover_url">封面地址</label>
+                <input type="url" id="cover_url" placeholder="https://...（可选）" autocapitalize="none" spellcheck="false" />
+              </div>
+              <div class="form-group">
+                <label for="cover_file">上传封面图片</label>
+                <div class="file-field">
+                  <input type="file" id="cover_file" accept="image/jpeg,image/png,image/webp,image/gif" />
+                  <span class="file-select-btn">选择图片</span>
+                  <span class="file-field-name" id="cover-file-name">未选择文件</span>
+                </div>
+              </div>
+            </div>
+            <div class="upload-hint">上传图片优先于地址；都不填时，EPUB 会自动读取内嵌封面。图片不超过 5MB。</div>
+            <div id="upload-cover-preview"></div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block" id="upload-submit">上传</button>
         </form>
       </div>
     </div>
   `;
+
+  const coverFileInput = document.getElementById('cover_file');
+  const coverUrlInput = document.getElementById('cover_url');
+  if (coverFileInput) coverFileInput.addEventListener('change', refreshUploadCoverPreview);
+  if (coverUrlInput) coverUrlInput.addEventListener('input', refreshUploadCoverPreview);
+  bindFileField('file', 'file-name');
+  bindFileField('cover_file', 'cover-file-name');
+  const seriesInput = document.getElementById('series');
+  if (seriesInput) {
+    seriesInput.addEventListener('click', openSeriesPicker);
+    seriesInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openSeriesPicker();
+      }
+    });
+  }
+  syncUploadTitleRequirement();
+
   document.getElementById('upload-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const bookFile = document.getElementById('file').files[0];
+    if (!bookFile) {
+      showMsg('upload-msg', '请选择书籍文件', true);
+      return;
+    }
+    const coverFile = coverFileInput && coverFileInput.files ? coverFileInput.files[0] : null;
+    if (coverFile && coverFile.size > 5 * 1024 * 1024) {
+      showMsg('upload-msg', '封面图片不能超过 5MB', true);
+      return;
+    }
+
+    const submitBtn = document.getElementById('upload-submit');
     const formData = new FormData();
     formData.append('title', document.getElementById('title').value);
     formData.append('author', document.getElementById('author').value);
@@ -776,14 +1266,30 @@ function renderUpload(container) {
     formData.append('description', document.getElementById('description').value);
     formData.append('series', document.getElementById('series').value);
     formData.append('volume_number', document.getElementById('volume_number').value || '0');
-    if (state.pendingCoverUrl) formData.append('cover_url', state.pendingCoverUrl);
-    formData.append('file', document.getElementById('file').files[0]);
+    const coverUrl = coverUrlInput ? coverUrlInput.value.trim() : '';
+    if (coverUrl) formData.append('cover_url', coverUrl);
+    // 封面文件先于书籍文件提交，封面校验失败时不会留下书籍临时文件
+    if (coverFile) formData.append('cover_file', coverFile);
+    formData.append('file', bookFile);
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = '上传中…';
+    }
     try {
       const created = await api('/api/books', { method: 'POST', body: formData });
-      showMsg('upload-msg', '上传成功', false);
-      setTimeout(() => navigate('/book/' + created.id), 900);
+      revokeUploadCoverObjectUrl();
+      let text = '上传成功';
+      if (created.cover_warning) text += '；' + created.cover_warning;
+      else if (created.cover_source === 'embedded') text += '，已自动读取内嵌封面';
+      showMsg('upload-msg', text, false);
+      setTimeout(() => navigate('/book/' + created.id), created.cover_warning ? 1800 : 900);
     } catch (err) {
       showMsg('upload-msg', err.message, true);
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '上传';
+      }
     }
   });
 }
@@ -925,23 +1431,20 @@ function paintAccount(container) {
           <fieldset class="account-fieldset">
             <legend>资料</legend>
             <div class="form-group">
-              <label for="account-name">用户名</label>
-              <input type="text" id="account-name" maxlength="32" value="${escapeAttr(displayName(user))}" placeholder="用户名" />
-              <div class="upload-hint">顶栏显示的名字，1 到 32 个字符</div>
+              <label for="account-name">显示名称</label>
+              <input type="text" id="account-name" maxlength="32" value="${escapeAttr(displayName(user))}" placeholder="显示名称" />
+              <div class="upload-hint">用于顶栏和账户中心展示，1 到 32 个字符</div>
             </div>
             <div class="form-group">
               <label for="account-email">邮箱</label>
               <input type="email" id="account-email" value="${escapeAttr(user.email || '')}" placeholder="邮箱地址" autocapitalize="none" spellcheck="false" />
-              <div class="upload-hint">用于登录，修改后请用新邮箱登录</div>
+              <div class="upload-hint">用于登录，修改后请用新邮箱登录；保存时会验证当前密码</div>
             </div>
           </fieldset>
 
           <fieldset class="account-fieldset">
             <legend>修改密码</legend>
-            <div class="form-group">
-              <label for="account-current">当前密码</label>
-              <input type="password" id="account-current" autocomplete="current-password" placeholder="输入当前密码后保存" />
-            </div>
+            <div class="upload-hint" style="margin:0 0 12px">修改密码时会弹窗验证当前密码。</div>
             <div class="form-row">
               <div class="form-group">
                 <label for="account-new">新密码</label>
@@ -990,42 +1493,147 @@ function bindAccountForm() {
   pwd.addEventListener('input', syncMatch);
   confirm.addEventListener('input', syncMatch);
 
+  async function applyAccountChanges(payload) {
+    const data = await api('/api/account', { method: 'PUT', body: payload });
+    state.user = data.user;
+    if (data.token) {
+      state.token = data.token;
+      localStorage.setItem('token', data.token);
+    }
+    paintAccount(document.getElementById('app'));
+    showMsg('account-msg', '已保存', false);
+  }
+
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const name = document.getElementById('account-name').value.trim();
     const email = document.getElementById('account-email').value.trim();
-    const current = document.getElementById('account-current').value;
     const next = pwd.value;
     const nextConfirm = confirm.value;
 
-    if (!name) return showMsg('account-msg', '用户名不能为空', true);
-    if (!current) return showMsg('account-msg', '请输入当前密码后再保存', true);
+    if (!name) return showMsg('account-msg', '显示名称不能为空', true);
+    if (!email) return showMsg('account-msg', '邮箱不能为空', true);
+    if (!EMAIL_PATTERN.test(email)) return showMsg('account-msg', '邮箱格式不正确', true);
     if (next && next !== nextConfirm) return showMsg('account-msg', '两次输入的密码不一致', true);
 
-    const payload = { name, email, current_password: current };
-    if (next) {
-      payload.new_password = next;
-      payload.confirm_password = nextConfirm;
+    const currentEmail = state.user && state.user.email ? String(state.user.email).toLowerCase() : '';
+    const emailChanged = email.toLowerCase() !== currentEmail;
+    const passwordChanged = !!next;
+
+    // 只有邮箱或密码变化才弹窗验证；仅改显示名称直接保存
+    if (emailChanged || passwordChanged) {
+      let description = '修改密码前，请输入当前密码确认身份。';
+      if (emailChanged && passwordChanged) description = '修改邮箱和密码前，请输入当前密码确认身份。';
+      else if (emailChanged) description = '修改邮箱前，请输入当前密码确认身份。';
+
+      openPasswordPrompt({
+        title: '验证当前密码',
+        description,
+        confirmText: '保存修改',
+        onSubmit: async (password) => {
+          const payload = { name, email, current_password: password };
+          if (next) {
+            payload.new_password = next;
+            payload.confirm_password = nextConfirm;
+          }
+          await applyAccountChanges(payload);
+        }
+      });
+      return;
     }
 
+    // 仅修改显示名称
     saveBtn.disabled = true;
     try {
-      const data = await api('/api/account', { method: 'PUT', body: payload });
-      state.user = data.user;
-      if (data.token) {
-        state.token = data.token;
-        localStorage.setItem('token', data.token);
-      }
-      // 清掉刚填的密码框
-      document.getElementById('account-current').value = '';
-      pwd.value = '';
-      confirm.value = '';
-      syncMatch();
-      showMsg('account-msg', '已保存', false);
-      paintAccount(document.getElementById('app'));
+      await applyAccountChanges({ name, email });
     } catch (err) {
       showMsg('account-msg', err.message, true);
       saveBtn.disabled = false;
+    }
+  });
+}
+
+// ---------- 密码验证弹窗 ----------
+
+function closePasswordModal() {
+  const host = document.getElementById('password-modal-host');
+  if (!host) return;
+  const previousFocus = host.dataset.previousFocus ? document.getElementById(host.dataset.previousFocus) : null;
+  host.innerHTML = '';
+  host.dataset.previousFocus = '';
+  document.body.classList.remove('modal-open');
+  if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
+}
+
+function openPasswordPrompt(options) {
+  const opts = options || {};
+  const title = opts.title || '验证当前密码';
+  const description = opts.description || '';
+  const confirmText = opts.confirmText || '确认';
+
+  let host = document.getElementById('password-modal-host');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'password-modal-host';
+    document.body.appendChild(host);
+  }
+  host.dataset.previousFocus = document.activeElement && document.activeElement.id ? document.activeElement.id : '';
+
+  host.innerHTML = `
+    <div class="app-modal-mask" data-password-mask>
+      <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="password-modal-title">
+        <header class="app-modal-head">
+          <h2 id="password-modal-title">${escapeHtml(title)}</h2>
+          <button type="button" class="app-modal-close" data-password-close aria-label="关闭">×</button>
+        </header>
+        <form class="app-modal-body" id="password-modal-form" novalidate>
+          <p class="app-modal-desc">${escapeHtml(description)}</p>
+          <div class="form-group">
+            <label for="password-modal-input">当前密码</label>
+            <input type="password" id="password-modal-input" autocomplete="current-password" placeholder="输入当前密码" />
+          </div>
+          <div id="password-modal-msg" role="alert" aria-live="polite"></div>
+          <div class="app-modal-actions">
+            <button type="button" class="btn" data-password-close>取消</button>
+            <button type="submit" class="btn btn-primary" id="password-modal-confirm">${escapeHtml(confirmText)}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  document.body.classList.add('modal-open');
+  const input = document.getElementById('password-modal-input');
+  const submit = document.getElementById('password-modal-confirm');
+  const msg = document.getElementById('password-modal-msg');
+  if (input) setTimeout(() => input.focus(), 0);
+
+  host.querySelector('[data-password-mask]').addEventListener('click', e => {
+    if (e.target.hasAttribute('data-password-mask')) closePasswordModal();
+  });
+  host.querySelectorAll('[data-password-close]').forEach(btn => {
+    btn.addEventListener('click', closePasswordModal);
+  });
+
+  document.getElementById('password-modal-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const password = input.value;
+    if (!password) {
+      msg.innerHTML = '<div class="message error">请输入当前密码</div>';
+      input.focus();
+      return;
+    }
+    msg.innerHTML = '';
+    submit.disabled = true;
+    submit.textContent = '验证中…';
+    try {
+      await opts.onSubmit(password);
+      closePasswordModal();
+    } catch (err) {
+      msg.innerHTML = `<div class="message error">${escapeHtml(err.message || '操作失败')}</div>`;
+      submit.disabled = false;
+      submit.textContent = confirmText;
+      input.select();
     }
   });
 }
@@ -1519,7 +2127,11 @@ document.addEventListener('click', event => {
 
 // Esc 关闭弹窗
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape') closeCollectionModal();
+  if (event.key === 'Escape') {
+    closePasswordModal();
+    closeSeriesModal();
+    closeCollectionModal();
+  }
 });
 
 window.addEventListener('hashchange', render);

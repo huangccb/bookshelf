@@ -456,6 +456,37 @@ body.admin-body {
   color: #ffffff;
 }
 
+/* 审批状态：待审批 / 已批准 / 已拒绝 */
+.admin-status-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.admin-status-tag.pending {
+  background: var(--warning-light);
+  border-color: #fde68a;
+  color: var(--warning);
+}
+
+.admin-status-tag.active {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
+}
+
+.admin-status-tag.rejected {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
 .admin-footnote {
   margin-top: 12px;
   font-size: 0.82rem;
@@ -937,11 +968,12 @@ body.admin-body {
     border-radius: var(--radius-lg);
   }
 
-  /* 账户表：邮箱一行，其余信息两列排开 */
+  /* 账户表：账户占满一行，状态与角色、数量与时间两两排开 */
   .admin-table:not(.admin-mini-table) tbody tr[data-uid] {
     grid-template-columns: 1fr auto;
     grid-template-areas:
-      "account role"
+      "account account"
+      "status role"
       "count date"
       "actions actions";
   }
@@ -949,6 +981,12 @@ body.admin-body {
   .admin-table:not(.admin-mini-table) tbody tr[data-uid] td[data-label="账户"] {
     display: block;
     grid-area: account;
+    min-width: 0;
+  }
+
+  .admin-table:not(.admin-mini-table) tbody tr[data-uid] td[data-label="状态"] {
+    display: block;
+    grid-area: status;
     min-width: 0;
   }
 
@@ -990,7 +1028,7 @@ body.admin-body {
 
   .admin-table:not(.admin-mini-table) tbody tr[data-uid] td[data-label="操作"] .admin-row-actions {
     display: grid;
-    grid-template-columns: auto 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
     gap: 8px;
     align-items: center;
   }

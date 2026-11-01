@@ -7,7 +7,7 @@ const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
 const JSZip = require('jszip');
-const { extractEpub } = require('./epub_extract');
+const { extractEpub, extractEpubCover } = require('./epub_extract');
 const { decodeText } = require('./text_decode');
 const metadata = require('./metadata');
 
@@ -55,16 +55,26 @@ function normalizeEmail(email) {
 
 const NAME_MAX = 32;
 
-// 用户名只是显示名：注册可选填，留空取邮箱 @ 前半段
+// 账户审批状态：注册后为 pending，管理员批准后才是 active
+const USER_STATUSES = ['pending', 'active', 'rejected'];
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// 历史数据没有 status，按已批准处理，避免升级后把老账户锁在门外
+function statusOf(user) {
+  return user && USER_STATUSES.includes(user.status) ? user.status : 'active';
+}
+
+function approvalError(status) {
+  if (status === 'rejected') {
+    return { error: '该账户未通过审批，请联系管理员', code: 'ACCOUNT_REJECTED' };
+  }
+  return { error: '账户正在等待管理员审批，审批通过后即可登录', code: 'ACCOUNT_PENDING' };
+}
+
+// 用户名只是显示名：注册必填，老账户留空时取邮箱 @ 前半段
 function fallbackName(email) {
   const local = normalizeEmail(email).split('@')[0] || '';
   return local.slice(0, NAME_MAX) || '读者';
-}
-
-function normalizeName(name, email) {
-  const value = String(name == null ? '' : name).trim();
-  if (!value) return fallbackName(email);
-  return value.slice(0, NAME_MAX);
 }
 
 function seedAdmin() {
@@ -94,11 +104,12 @@ function seedAdmin() {
       name: fallbackName(target),
       password_hash,
       role: 'admin',
+      status: 'active',
       created_at: new Date().toISOString()
     });
     console.log(`[Admin] Created default admin: ${target}`);
-  } else if (existing.role !== 'admin') {
-    db.update('users', u => u.id === existing.id, u => Object.assign({}, u, { role: 'admin' }));
+  } else if (existing.role !== 'admin' || statusOf(existing) !== 'active') {
+    db.update('users', u => u.id === existing.id, u => Object.assign({}, u, { role: 'admin', status: 'active' }));
     console.log(`[Admin] Promoted ${target} to admin`);
   }
 
@@ -108,6 +119,9 @@ function seedAdmin() {
   // 4) 缺用户名的账户补邮箱前缀，保证顶栏始终有名字可显示
   db.update('users', u => !String(u.name || '').trim(),
     u => Object.assign({}, u, { name: fallbackName(u.email) }));
+
+  // 5) 旧账户默认已批准；审批状态只由后台变更
+  db.update('users', u => !u.status, u => Object.assign({}, u, { status: 'active' }));
 }
 seedAdmin();
 
@@ -123,10 +137,12 @@ async function attachUser(req, res, next) {
   } catch (e) {
     return res.status(403).json({ error: '登录已过期' });
   }
-  // 每次都回查用户：角色变更、账号被删后，旧令牌立即失效
+  // 每次都回查用户：角色变更、账号被删、审批状态变化后，旧令牌立即失效
   const user = db.get('users').find(u => u.id === payload.id);
   if (!user) return res.status(403).json({ error: '登录已过期' });
-  req.user = { id: user.id, email: user.email, role: user.role || 'user' };
+  const status = statusOf(user);
+  if (status !== 'active') return res.status(403).json(approvalError(status));
+  req.user = publicUser(user);
   req.token = token;
   next();
 }
@@ -159,13 +175,17 @@ function permissionsOf(role) {
 }
 
 function publicUser(u) {
+  const status = statusOf(u);
+  const role = u.role || 'user';
   return {
     id: u.id,
     email: u.email,
     name: u.name || fallbackName(u.email),
-    role: u.role || 'user',
+    role,
+    status,
     created_at: u.created_at,
-    permissions: permissionsOf(u.role || 'user')
+    // 待审批/已拒绝的账户没有可用权限；批准后恢复普通用户权限
+    permissions: status === 'active' ? permissionsOf(role) : []
   };
 }
 
@@ -181,18 +201,38 @@ function canDeleteBook(user) {
 
 // ---------- 上传 ----------
 
+const BOOK_EXTENSIONS = ['.epub', '.pdf', '.txt', '.docx', '.mobi', '.azw3'];
+const COVER_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+const COVER_MIMES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+const COVER_MAX_BYTES = 5 * 1024 * 1024;
+const COVER_EXT_BY_MIME = {
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'image/gif': '.gif'
+};
+
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => cb(null, uuidv4() + path.extname(file.originalname))
+  // 书籍文件进 uploads，封面临时文件先放 covers，写入记录后再改成书籍专属文件名
+  destination: (req, file, cb) => {
+    const isCover = file.fieldname === 'cover_file' || file.fieldname === 'cover';
+    cb(null, isCover ? coversDir : uploadsDir);
+  },
+  filename: (req, file, cb) => cb(null, uuidv4() + path.extname(file.originalname).toLowerCase())
 });
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 },
+  limits: { fileSize: 100 * 1024 * 1024, files: 2 },
   fileFilter: (req, file, cb) => {
-    const allowed = ['.epub', '.pdf', '.txt', '.docx', '.mobi', '.azw3'];
     const ext = path.extname(file.originalname).toLowerCase();
-    if (allowed.includes(ext)) cb(null, true);
-    else cb(new Error('不支持的文件格式: ' + ext));
+    const isCover = file.fieldname === 'cover_file' || file.fieldname === 'cover';
+    if (isCover) {
+      if (COVER_MIMES.includes(file.mimetype) && COVER_EXTENSIONS.includes(ext)) return cb(null, true);
+      return cb(new Error('封面只支持 JPG、PNG、WebP、GIF 图片'));
+    }
+    if (file.fieldname === 'file' && BOOK_EXTENSIONS.includes(ext)) return cb(null, true);
+    return cb(new Error('不支持的文件格式: ' + ext));
   }
 });
 
@@ -200,32 +240,39 @@ const upload = multer({
 
 app.post('/api/auth/register', (req, res) => {
   const { email, password, name } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: '邮箱和密码不能为空' });
   const normalized = normalizeEmail(email);
-  if (!normalized.includes('@') || !normalized.includes('.')) {
-    return res.status(400).json({ error: '邮箱格式不正确' });
+  const displayName = String(name == null ? '' : name).trim();
+  const pass = String(password == null ? '' : password);
+
+  if (!normalized || !pass) return res.status(400).json({ error: '邮箱和密码不能为空' });
+  if (!EMAIL_PATTERN.test(normalized)) return res.status(400).json({ error: '邮箱格式不正确' });
+  if (!displayName) return res.status(400).json({ error: '请填写显示名称' });
+  if (displayName.length > NAME_MAX) {
+    return res.status(400).json({ error: `显示名称不能超过 ${NAME_MAX} 个字符` });
   }
-  if (String(name || '').trim().length > NAME_MAX) {
-    return res.status(400).json({ error: `用户名不能超过 ${NAME_MAX} 个字符` });
-  }
+  if (pass.length < 6) return res.status(400).json({ error: '密码至少 6 位' });
+
   const users = db.get('users');
   if (users.find(u => normalizeEmail(u.email) === normalized)) {
-    return res.status(409).json({ error: '邮箱已被注册' });
+    return res.status(409).json({ error: '该邮箱已被注册，请直接登录' });
   }
-  const id = uuidv4();
-  const password_hash = bcrypt.hashSync(password, 10);
-  // 用户名选填，留空用邮箱前缀
+
+  // 注册只创建待审批的普通用户，不签发令牌
   const user = {
-    id,
+    id: uuidv4(),
     email: normalized,
-    name: normalizeName(name, normalized),
-    password_hash,
+    name: displayName,
+    password_hash: bcrypt.hashSync(pass, 10),
     role: 'user',
+    status: 'pending',
     created_at: new Date().toISOString()
   };
   db.insert('users', user);
-  const token = jwt.sign({ id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-  res.json({ token, user: publicUser(user) });
+  res.status(201).json({
+    pending: true,
+    message: '注册申请已提交，请等待管理员审批',
+    user: publicUser(user)
+  });
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -233,9 +280,12 @@ app.post('/api/auth/login', (req, res) => {
   const normalized = normalizeEmail(email);
   const users = db.get('users');
   const user = users.find(u => normalizeEmail(u.email) === normalized);
-  if (!user || !bcrypt.compareSync(password || '', user.password_hash)) {
+  if (!user || !bcrypt.compareSync(String(password == null ? '' : password), user.password_hash)) {
     return res.status(401).json({ error: '邮箱或密码错误' });
   }
+  // 密码正确后才暴露审批状态，避免未认证探测
+  const status = statusOf(user);
+  if (status !== 'active') return res.status(403).json(approvalError(status));
   const token = jwt.sign({ id: user.id, email: user.email, role: user.role || 'user' }, JWT_SECRET, { expiresIn: '7d' });
   res.json({ token, user: publicUser(user) });
 });
@@ -246,40 +296,39 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/auth/me', authenticateToken, (req, res) => {
-  res.json({ user: Object.assign({}, req.user, { permissions: permissionsOf(req.user.role) }) });
+  // attachUser 已返回完整的 publicUser（含 name/status/permissions）
+  res.json({ user: req.user });
 });
 
 // ---------- 账户自助 ----------
 
-// 修改自己的用户名、邮箱、密码；改密码需要输入两次并与当前密码核对
+// 修改自己的显示名称、邮箱、密码；改邮箱或密码需要额外验证当前密码
 app.put('/api/account', authenticateToken, (req, res) => {
   const body = req.body || {};
   const { name, email, current_password, new_password, confirm_password } = body;
   const user = db.get('users').find(u => u.id === req.user.id);
   if (!user) return res.status(404).json({ error: '账户不存在' });
 
-  if (!current_password || !bcrypt.compareSync(String(current_password), user.password_hash)) {
-    return res.status(403).json({ error: '当前密码不正确' });
-  }
-
   const patch = {};
+  let emailChanged = false;
 
   if (name !== undefined) {
     const trimmed = String(name || '').trim();
-    if (!trimmed) return res.status(400).json({ error: '用户名不能为空' });
+    if (!trimmed) return res.status(400).json({ error: '显示名称不能为空' });
     if (trimmed.length > NAME_MAX) {
-      return res.status(400).json({ error: `用户名不能超过 ${NAME_MAX} 个字符` });
+      return res.status(400).json({ error: `显示名称不能超过 ${NAME_MAX} 个字符` });
     }
     patch.name = trimmed;
   }
 
   if (email !== undefined) {
     const normalized = normalizeEmail(email);
-    if (!normalized || !normalized.includes('@') || !normalized.includes('.')) {
+    if (!normalized || !EMAIL_PATTERN.test(normalized)) {
       return res.status(400).json({ error: '邮箱格式不正确' });
     }
     const taken = db.get('users').find(u => u.id !== user.id && normalizeEmail(u.email) === normalized);
     if (taken) return res.status(409).json({ error: '邮箱已被使用' });
+    emailChanged = normalized !== normalizeEmail(user.email);
     patch.email = normalized;
   }
 
@@ -301,12 +350,20 @@ app.put('/api/account', authenticateToken, (req, res) => {
     return res.status(400).json({ error: '没有需要修改的内容' });
   }
 
+  // 敏感信息（邮箱、密码）变化时才要求当前密码；只改显示名称不需要
+  if (emailChanged || passwordChanged) {
+    if (!current_password) return res.status(400).json({ error: '请输入当前密码' });
+    if (!bcrypt.compareSync(String(current_password), user.password_hash)) {
+      return res.status(403).json({ error: '当前密码不正确' });
+    }
+  }
+
   db.update('users', u => u.id === user.id, u => Object.assign({}, u, patch));
   const updated = db.get('users').find(u => u.id === user.id);
 
   // 邮箱或密码变了就重新签发令牌，避免旧令牌里残留旧邮箱
   let token;
-  if (passwordChanged || patch.email) {
+  if (passwordChanged || emailChanged) {
     token = jwt.sign({ id: updated.id, email: updated.email, role: updated.role || 'user' }, JWT_SECRET, { expiresIn: '7d' });
   }
   res.json({ success: true, user: publicUser(updated), token });
@@ -334,15 +391,21 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
   const users = db.get('users').map(u => Object.assign(publicUser(u), {
     book_count: books.filter(b => b.created_by === u.id).length
   }));
-  users.sort((a, b) => (a.role === 'admin' ? -1 : 1) - (b.role === 'admin' ? -1 : 1) || String(a.created_at).localeCompare(String(b.created_at)));
+  const statusRank = { pending: 0, active: 1, rejected: 2 };
+  users.sort((a, b) =>
+    (statusRank[a.status] == null ? 3 : statusRank[a.status]) - (statusRank[b.status] == null ? 3 : statusRank[b.status]) ||
+    (a.role === 'admin' ? 0 : 1) - (b.role === 'admin' ? 0 : 1) ||
+    String(a.created_at).localeCompare(String(b.created_at))
+  );
   res.json(users);
 });
 
-// 新建账户：管理员可直接指定角色
+// 新建账户：管理员可直接指定角色；后台创建的账户视为已批准
 app.post('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
   const { email, password, role } = req.body || {};
   const normalized = normalizeEmail(email);
   if (!normalized || !password) return res.status(400).json({ error: '邮箱和密码不能为空' });
+  if (!EMAIL_PATTERN.test(normalized)) return res.status(400).json({ error: '邮箱格式不正确' });
   if (String(password).length < 6) return res.status(400).json({ error: '密码至少 6 位' });
   if (role && role !== 'admin' && role !== 'user') return res.status(400).json({ error: '角色不正确' });
   if (db.get('users').find(u => normalizeEmail(u.email) === normalized)) {
@@ -353,21 +416,39 @@ app.post('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
     email: normalized,
     password_hash: bcrypt.hashSync(String(password), 10),
     role: role === 'admin' ? 'admin' : 'user',
+    status: 'active',
     created_at: new Date().toISOString()
   };
   db.insert('users', user);
   res.json(publicUser(user));
 });
 
-// 修改角色 / 重置密码 / 改邮箱
+// 审批状态 / 修改角色 / 重置密码 / 改邮箱
 app.put('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) => {
   const target = db.get('users').find(u => u.id === req.params.id);
   if (!target) return res.status(404).json({ error: '账户不存在' });
-  const { role, password, email } = req.body || {};
+  const { role, password, email, status } = req.body || {};
   const patch = {};
 
+  if (status !== undefined) {
+    if (!USER_STATUSES.includes(status)) return res.status(400).json({ error: '审批状态不正确' });
+    // 防止管理员把自己或其它管理员锁在后台之外
+    if (target.id === req.user.id && status !== 'active') {
+      return res.status(400).json({ error: '不能停用自己的账户' });
+    }
+    if (target.role === 'admin' && status !== 'active') {
+      return res.status(400).json({ error: '不能停用管理员账户' });
+    }
+    patch.status = status;
+  }
+
+  // 待审批/已拒绝的账户先批准再改角色，避免出现无法登录的管理员
+  const effectiveStatus = patch.status || statusOf(target);
   if (role !== undefined) {
     if (role !== 'admin' && role !== 'user') return res.status(400).json({ error: '角色不正确' });
+    if (effectiveStatus !== 'active') {
+      return res.status(400).json({ error: '请先批准该账户，再调整角色' });
+    }
     if (target.id === req.user.id && role !== 'admin') {
       return res.status(400).json({ error: '不能取消自己的管理员身份' });
     }
@@ -376,6 +457,7 @@ app.put('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) => {
   if (email !== undefined) {
     const normalized = normalizeEmail(email);
     if (!normalized) return res.status(400).json({ error: '邮箱不能为空' });
+    if (!EMAIL_PATTERN.test(normalized)) return res.status(400).json({ error: '邮箱格式不正确' });
     if (db.get('users').find(u => u.id !== target.id && normalizeEmail(u.email) === normalized)) {
       return res.status(409).json({ error: '邮箱已被使用' });
     }
@@ -408,6 +490,7 @@ app.get('/api/admin/stats', authenticateToken, requireAdmin, (req, res) => {
     books: books.length,
     users: users.length,
     admins: users.filter(u => u.role === 'admin').length,
+    pending: users.filter(u => statusOf(u) === 'pending').length,
     size: books.reduce((sum, b) => sum + (b.file_size || 0), 0)
   });
 });
@@ -466,12 +549,10 @@ app.get('/api/metadata/detail', authenticateToken, async (req, res) => {
   }
 });
 
-// 只允许从豆瓣图床抓封面，避免把服务端变成任意 URL 代理
-const COVER_HOST_RE = /^https:\/\/img\d*\.doubanio\.com\//;
-
+// 封面代理：支持豆瓣与自定义图片地址；metadata.downloadCover 会限制协议、内网地址与大小
 app.get('/api/metadata/cover', async (req, res) => {
-  const url = (req.query.url || '').toString();
-  if (!COVER_HOST_RE.test(url)) return res.status(400).end();
+  const url = (req.query.url || '').toString().trim();
+  if (!url) return res.status(400).end();
   try {
     const { buffer, contentType } = await metadata.downloadCover(url);
     res.setHeader('Content-Type', contentType);
@@ -482,20 +563,60 @@ app.get('/api/metadata/cover', async (req, res) => {
   }
 });
 
-// ---------- 书籍 ----------
+// ---------- 书籍封面 ----------
 
-async function saveCoverFromUrl(bookId, coverUrl) {
-  if (!COVER_HOST_RE.test(coverUrl)) throw new Error('封面地址不受支持');
-  const { buffer, contentType } = await metadata.downloadCover(coverUrl);
-  const ext = contentType.includes('png') ? '.png' : contentType.includes('webp') ? '.webp' : '.jpg';
-  const filename = bookId + ext;
+function coverExtFromMime(contentType, fallback) {
+  const type = String(contentType || '').split(';')[0].trim().toLowerCase();
+  const ext = COVER_EXT_BY_MIME[type];
+  if (ext) return ext;
+  if (fallback && COVER_EXTENSIONS.includes(fallback)) return fallback;
+  throw new Error('封面格式不支持，仅支持 JPG、PNG、WebP、GIF');
+}
+
+function removeCoverFiles(bookId) {
+  if (!bookId || !fs.existsSync(coversDir)) return;
   for (const old of fs.readdirSync(coversDir)) {
-    if (old.startsWith(bookId + '.')) {
+    if (old === bookId || old.startsWith(bookId + '.') || old.startsWith(bookId + '-')) {
       try { fs.unlinkSync(path.join(coversDir, old)); } catch (e) {}
     }
   }
+}
+
+// 封面统一用「书籍 ID + UUID」命名，换封面后 URL 也变化，避免浏览器缓存旧图
+function saveCoverBuffer(bookId, buffer, contentType) {
+  if (!buffer || buffer.length > COVER_MAX_BYTES) throw new Error('封面图片不能超过 5MB');
+  const filename = `${bookId}-${uuidv4()}${coverExtFromMime(contentType)}`;
+  removeCoverFiles(bookId);
   fs.writeFileSync(path.join(coversDir, filename), buffer);
   return filename;
+}
+
+function saveUploadedCover(bookId, file) {
+  const ext = coverExtFromMime(file.mimetype, path.extname(file.originalname).toLowerCase());
+  const filename = `${bookId}-${uuidv4()}${ext}`;
+  removeCoverFiles(bookId);
+  fs.renameSync(file.path, path.join(coversDir, filename));
+  return filename;
+}
+
+function discardUploadedFile(file) {
+  if (!file || !file.path) return;
+  try { fs.unlinkSync(file.path); } catch (e) {}
+}
+
+async function saveCoverFromUrl(bookId, coverUrl) {
+  const { buffer, contentType } = await metadata.downloadCover(coverUrl);
+  return saveCoverBuffer(bookId, buffer, contentType);
+}
+
+// 只有 EPUB 能可靠读取内嵌封面；用户提供封面时不会走到这里
+async function saveEmbeddedCover(book) {
+  if (!book || book.format !== 'epub' || !book.file_path) return '';
+  const filePath = path.join(uploadsDir, path.basename(book.file_path));
+  if (!fs.existsSync(filePath)) return '';
+  const cover = await extractEpubCover(fs.readFileSync(filePath));
+  if (!cover) return '';
+  return saveCoverBuffer(book.id, cover.buffer, cover.contentType);
 }
 
 // 删除书籍对应的文件、封面与解压缓存
@@ -509,45 +630,106 @@ function removeBookFiles(book) {
   } catch (e) {
     console.warn('[Delete] 文件删除失败:', e.message);
   }
-  try {
-    for (const old of fs.readdirSync(coversDir)) {
-      if (old.startsWith(book.id + '.')) fs.unlinkSync(path.join(coversDir, old));
-    }
-  } catch (e) {}
+  try { removeCoverFiles(book.id); } catch (e) {}
   epubZipCache.delete(book.id);
 }
 
-app.post('/api/books', authenticateToken, upload.single('file'), async (req, res) => {
+app.post('/api/books', authenticateToken, upload.fields([
+  { name: 'file', maxCount: 1 },
+  { name: 'cover_file', maxCount: 1 }
+]), async (req, res) => {
   const { title, author, series, volume_number, description, publish_year, publisher, isbn, cover_url } = req.body;
-  if (!req.file || !title) return res.status(400).json({ error: '缺少文件或标题' });
+  const files = req.files || {};
+  const bookFile = (files.file || [])[0];
+  const coverFile = (files.cover_file || [])[0];
+  const titleText = String(title || '').trim();
+  const seriesText = String(series || '').trim();
+  const discardAll = () => {
+    discardUploadedFile(bookFile);
+    discardUploadedFile(coverFile);
+  };
+
+  // 有系列时书名可以留空，标题回退为系列名
+  if (!bookFile || (!titleText && !seriesText)) {
+    discardAll();
+    return res.status(400).json({ error: '缺少文件、书名或系列' });
+  }
+  if (coverFile && coverFile.size > COVER_MAX_BYTES) {
+    discardAll();
+    return res.status(400).json({ error: '封面图片不能超过 5MB' });
+  }
+
   const id = uuidv4();
-  const format = path.extname(req.file.originalname).toLowerCase().replace('.', '');
+  const format = path.extname(bookFile.originalname).toLowerCase().replace('.', '');
   const book = {
     id,
-    title,
+    title: titleText || seriesText,
     author: author || '',
-    series: series || '',
+    series: seriesText,
     volume_number: parseInt(volume_number) || 0,
     description: description || '',
     publish_year: publish_year || '',
     publisher: publisher || '',
     isbn: isbn || '',
     cover: '',
+    cover_source: '',
     format,
-    file_path: req.file.filename,
-    file_size: req.file.size,
+    file_path: bookFile.filename,
+    file_size: bookFile.size,
     created_by: req.user.id,
     created_at: new Date().toISOString()
   };
-  if (cover_url) {
+
+  // 封面优先级：用户上传的图片 > 用户填写的地址 > 书籍自带封面
+  let coverError = '';
+  if (coverFile) {
+    try {
+      book.cover = saveUploadedCover(id, coverFile);
+      book.cover_source = 'user';
+    } catch (e) {
+      coverError = '封面保存失败';
+      discardUploadedFile(coverFile);
+      console.warn('[Cover] 上传封面保存失败:', e.message);
+    }
+  } else if (cover_url) {
     try {
       book.cover = await saveCoverFromUrl(id, cover_url);
+      book.cover_source = 'user';
     } catch (e) {
+      coverError = '封面地址获取失败';
       console.warn('[Cover] 上传时封面保存失败:', e.message);
     }
   }
+
+  if (!book.cover) {
+    try {
+      book.cover = await saveEmbeddedCover(book);
+      if (book.cover) book.cover_source = 'embedded';
+    } catch (e) {
+      console.warn('[Cover] 内嵌封面读取失败:', e.message);
+    }
+  }
+
+  let coverWarning = '';
+  if (coverError) {
+    coverWarning = book.cover && book.cover_source === 'embedded'
+      ? coverError + '，已使用书籍自带封面'
+      : coverError;
+  }
+
   db.insert('books', book);
-  res.json({ id, title, author, series, volume_number: book.volume_number, format, file_size: req.file.size, cover: book.cover });
+  res.json({
+    id,
+    title: book.title,
+    author,
+    series: book.series,
+    volume_number: book.volume_number,
+    format,
+    file_size: book.file_size,
+    cover: book.cover,
+    cover_source: book.cover_source,
+    cover_warning: coverWarning || undefined
+  });
 });
 
 app.get('/api/books', authenticateToken, (req, res) => {
@@ -559,6 +741,17 @@ app.get('/api/books', authenticateToken, (req, res) => {
     can_delete: canDeleteBook(req.user)
   }));
   res.json(books);
+});
+
+// 已有系列名列表：上传页用来提供可点击的系列选项
+app.get('/api/series', authenticateToken, (req, res) => {
+  const series = Array.from(new Set(
+    db.get('books')
+      .map(b => String(b.series || '').trim())
+      .filter(Boolean)
+  ));
+  series.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  res.json({ series });
 });
 
 app.get('/api/books/:id', authenticateToken, (req, res) => {
@@ -587,6 +780,7 @@ app.put('/api/books/:id', authenticateToken, async (req, res) => {
   if (b.cover_url) {
     try {
       patch.cover = await saveCoverFromUrl(book.id, b.cover_url);
+      patch.cover_source = 'user';
     } catch (e) {
       return res.status(502).json({ error: '封面保存失败：' + e.message });
     }
@@ -607,6 +801,57 @@ app.delete('/api/books/:id', authenticateToken, requireAdmin, (req, res) => {
   res.json({ success: true });
 });
 
+// 上传或替换封面（图片文件）
+app.post('/api/books/:id/cover', authenticateToken, upload.single('cover'), (req, res) => {
+  const file = req.file;
+  const book = db.get('books').find(b => b.id === req.params.id);
+  if (!book) {
+    discardUploadedFile(file);
+    return res.status(404).json({ error: '书籍不存在' });
+  }
+  if (!canEditBook(req.user, book)) {
+    discardUploadedFile(file);
+    return res.status(403).json({ error: '只能修改自己上传的书籍' });
+  }
+  if (!file) return res.status(400).json({ error: '请选择封面图片' });
+  if (file.size > COVER_MAX_BYTES) {
+    discardUploadedFile(file);
+    return res.status(400).json({ error: '封面图片不能超过 5MB' });
+  }
+  try {
+    const cover = saveUploadedCover(book.id, file);
+    db.update('books', x => x.id === book.id, x => Object.assign({}, x, { cover, cover_source: 'user' }));
+    const updated = db.get('books').find(x => x.id === book.id);
+    const { file_path, ...rest } = updated;
+    res.json(rest);
+  } catch (e) {
+    discardUploadedFile(file);
+    res.status(500).json({ error: '封面保存失败：' + e.message });
+  }
+});
+
+// 从 EPUB 文件重新读取内嵌封面
+app.post('/api/books/:id/cover/embedded', authenticateToken, async (req, res) => {
+  const book = db.get('books').find(b => b.id === req.params.id);
+  if (!book) return res.status(404).json({ error: '书籍不存在' });
+  if (!canEditBook(req.user, book)) {
+    return res.status(403).json({ error: '只能修改自己上传的书籍' });
+  }
+  if (book.format !== 'epub') {
+    return res.status(400).json({ error: '只有 EPUB 支持读取内嵌封面' });
+  }
+  try {
+    const cover = await saveEmbeddedCover(book);
+    if (!cover) return res.status(404).json({ error: '没有找到内嵌封面' });
+    db.update('books', x => x.id === book.id, x => Object.assign({}, x, { cover, cover_source: 'embedded' }));
+    const updated = db.get('books').find(x => x.id === book.id);
+    const { file_path, ...rest } = updated;
+    res.json(rest);
+  } catch (e) {
+    res.status(500).json({ error: '内嵌封面读取失败：' + e.message });
+  }
+});
+
 // 删除封面
 app.delete('/api/books/:id/cover', authenticateToken, (req, res) => {
   const book = db.get('books').find(b => b.id === req.params.id);
@@ -614,12 +859,8 @@ app.delete('/api/books/:id/cover', authenticateToken, (req, res) => {
   if (!canEditBook(req.user, book)) {
     return res.status(403).json({ error: '只能修改自己上传的书籍' });
   }
-  for (const old of fs.readdirSync(coversDir)) {
-    if (old.startsWith(book.id + '.')) {
-      try { fs.unlinkSync(path.join(coversDir, old)); } catch (e) {}
-    }
-  }
-  db.update('books', x => x.id === book.id, x => Object.assign({}, x, { cover: '' }));
+  removeCoverFiles(book.id);
+  db.update('books', x => x.id === book.id, x => Object.assign({}, x, { cover: '', cover_source: '' }));
   res.json({ success: true });
 });
 
@@ -823,14 +1064,22 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// 上传等中间件抛出的错误统一转成 JSON
+// 上传等中间件抛出的错误统一转成 JSON，并清理已落盘的临时文件
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
+  if (req.file) discardUploadedFile(req.file);
+  if (req.files) {
+    Object.keys(req.files).forEach(key => (req.files[key] || []).forEach(discardUploadedFile));
+  }
   const msg = err && err.message ? err.message : '服务器内部错误';
   res.status(err.status || 400).json({ error: msg });
 });
 
-app.listen(PORT, () => {
-  console.log(`Bookshelf running on http://localhost:${PORT}`);
-  console.log(`Admin console: http://localhost:${PORT}${ADMIN_PATH}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Bookshelf running on http://localhost:${PORT}`);
+    console.log(`Admin console: http://localhost:${PORT}${ADMIN_PATH}`);
+  });
+}
+
+module.exports = app;
